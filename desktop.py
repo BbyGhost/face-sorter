@@ -176,7 +176,7 @@ class FaceSorter(tk.Tk):
 
     def _load_gallery_thumbnails(self,generation,jobs):
         from PIL import Image
-        for g,r,c in jobs:
+        for index,(g,r,c) in enumerate(jobs):
             if generation!=self._gallery_generation: return
             try:
                 path=service.person_thumbnail(g["id"])
@@ -184,8 +184,12 @@ class FaceSorter(tk.Tk):
                 with Image.open(path) as im:
                     im=ImageOps.fit(im.convert("RGB"),(190,190),method=Image.Resampling.LANCZOS)
                     self._gallery_queue.put((generation,g["id"],im.copy()))
+                # Start painting as soon as the first thumbnails are ready instead
+                # of waiting for every person in a large library.
+                if index % 4 == 0:
+                    self.after(0,self._drain_gallery_queue)
             except Exception: continue
-        self.after(1,self._drain_gallery_queue)
+        self.after(0,self._drain_gallery_queue)
 
     def _drain_gallery_queue(self):
         processed=0
@@ -247,36 +251,51 @@ class FaceSorter(tk.Tk):
         canvas.configure(yscrollcommand=sb.set); canvas.pack(side="left",fill="both",expand=True); sb.pack(side="right",fill="y")
         grid=tk.Frame(canvas,bg=BG); canvas.create_window((0,0),window=grid,anchor="nw")
         grid.bind("<Configure>",lambda e:canvas.configure(scrollregion=canvas.bbox("all")))
-        cols=5
-        for i,path in enumerate(self.photos):
-            th=self._thumbnail(path,180)
-            if not th:continue
-            lab=tk.Label(grid,image=th,bg=CARD,cursor="hand2"); lab.image=th; lab.grid(row=i//cols,column=i%cols,padx=5,pady=5)
-            lab.bind("<Double-Button-1>",lambda e,p=path:os.startfile(p))
         self.button(win,"Close",win.destroy).pack(pady=(0,18))
-        threading.Thread(target=self._load_person_gallery,args=(g,win,grid,subtitle,canvas),daemon=True).start()
+        self._person_gallery_queue=queue.Queue()
+        self._person_gallery_generation=getattr(self,"_person_gallery_generation",0)+1
+        generation=self._person_gallery_generation
+        threading.Thread(target=self._load_person_gallery,args=(g,win,grid,subtitle,canvas,generation),daemon=True).start()
 
-    def _load_person_gallery(self,g,win,grid,subtitle,canvas):
+    def _load_person_gallery(self,g,win,grid,subtitle,canvas,generation):
         try:
             photos=service.person_images(g["id"])
         except Exception as e:
-            self.after(0,lambda: subtitle.config(text=f"Could not load photos: {e}"))
+            self.after(0,lambda e=e: subtitle.config(text=f"Could not load photos: {e}"))
             return
-        def render():
-            if not win.winfo_exists(): return
-            self.photos=photos
-            self.photo_index=0
-            subtitle.config(text=f"{len(photos):,} photos • double-click a photo to open original")
-            for i,path in enumerate(photos):
-                th=self._thumbnail(path,180)
-                if not th: continue
-                lab=tk.Label(grid,image=th,bg=CARD,cursor="hand2")
-                lab.image=th
-                lab.grid(row=i//5,column=i%5,padx=5,pady=5)
-                lab.bind("<Double-Button-1>",lambda e,p=path:os.startfile(p))
-            grid.update_idletasks()
-            canvas.configure(scrollregion=canvas.bbox("all"))
-        self.after(0,render)
+        if not win.winfo_exists(): return
+        self.photos=photos
+        self.photo_index=0
+        self.after(0,lambda: subtitle.config(text=f"{len(photos):,} photos • loading previews…"))
+        for index,path in enumerate(photos):
+            if not win.winfo_exists() or generation!=self._person_gallery_generation: return
+            try:
+                with Image.open(path) as im:
+                    im=ImageOps.fit(im.convert("RGB"),(180,180),method=Image.Resampling.LANCZOS)
+                    self._person_gallery_queue.put((generation,path,im.copy(),index))
+                if index % 4 == 0:
+                    self.after(0,self._drain_person_gallery,win,grid,canvas)
+            except (OSError,UnidentifiedImageError):
+                continue
+        self.after(0,self._drain_person_gallery,win,grid,canvas)
+
+    def _drain_person_gallery(self,win,grid,canvas):
+        if not win.winfo_exists(): return
+        made=0
+        while made<8:
+            try: generation,path,im,index=self._person_gallery_queue.get_nowait()
+            except queue.Empty: break
+            if generation!=self._person_gallery_generation: continue
+            photo=ImageTk.PhotoImage(im)
+            lab=tk.Label(grid,image=photo,bg=CARD,cursor="hand2")
+            lab.image=photo
+            lab.grid(row=index//5,column=index%5,padx=5,pady=5)
+            lab.bind("<Double-Button-1>",lambda e,p=path:os.startfile(p))
+            made+=1
+        grid.update_idletasks()
+        canvas.configure(scrollregion=canvas.bbox("all"))
+        if not self._person_gallery_queue.empty():
+            self.after(20,self._drain_person_gallery,win,grid,canvas)
 
     def _bottom_bar(self,main):
         bar=tk.Frame(main,bg=BG); bar.pack(fill="x",padx=30,pady=(10,18))
