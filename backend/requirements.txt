@@ -7,3 +7,4 @@ insightface>=0.7.3
 # NVIDIA systems use ONNX Runtime CUDA. Only one ONNX Runtime package
 # (CPU/DirectML/CUDA) should be installed in the virtual environment.
 onnxruntime-gpu==1.26.0
+nvidia-cudnn-cu12==9.7.1.26
