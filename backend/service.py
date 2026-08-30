@@ -25,7 +25,7 @@ DB.execute('CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT)
 LOCK=threading.Lock(); DB_LOCK=threading.RLock(); PEOPLE_LOCK=threading.RLock()
 STATE={'state':'ready','message':'Choose a folder to begin.','total':0,'processed':0,'new':0,'unchanged':0,'failed':0,'faces':0,'speed':0.0,'eta_seconds':None,'provider':'','workers':0,'mode':'auto'}
 EXT={'.jpg','.jpeg','.png','.webp','.bmp','.tif','.tiff'}
-MODEL_VERSION='arcface-buffalo-l-v2-cpu-gpu-modes-v1'
+MODEL_VERSION='arcface-buffalo-l-cpu-gpu-v2'
 FACE_APPS={}; FACE_LOCK=threading.RLock()
 cv2.setLogLevel(0)
 app=FastAPI(docs_url=None,redoc_url=None)
@@ -44,6 +44,16 @@ def copy_to_folder(paths,folder:Path):
         shutil.copy2(src,target); count+=1
     return count
 def providers(): return ort.get_available_providers() if ort else []
+def active_model_providers(engine):
+    model=FACE_APPS.get(engine)
+    if model is None:return []
+    found=set()
+    for item in getattr(model,'models',{}).values():
+        session=getattr(item,'session',None)
+        if session is not None:
+            try: found.update(session.get_providers())
+            except Exception: pass
+    return sorted(found)
 def normalize_mode(mode):
     value=(mode or 'auto').strip().lower()
     return value if value in {'auto','gpu','cpu','both'} else 'auto'
@@ -124,6 +134,9 @@ def scan(folder,mode='auto'):
         with LOCK: STATE.update(state='scanning',message='Loading face models…',total=0,processed=0,new=0,unchanged=0,failed=0,faces=0,speed=0.0,eta_seconds=None,mode=mode,provider='',workers=0)
         migrate_model_index(); engines=mode_plan(mode)
         for e in engines: prepare_model(e)
+        active=[]
+        for e in engines: active.extend(active_model_providers(e))
+        with LOCK: STATE['provider']=' + '.join(sorted(set(active))) or 'CPUExecutionProvider'
     except Exception as error:
         with LOCK: STATE.update(state='error',message=f'Face model could not start: {error}')
         return
@@ -138,7 +151,9 @@ def scan(folder,mode='auto'):
     elif mode=='both': worker_plan=['gpu']+['cpu']*min(2,cpu_workers)
     else: worker_plan=['gpu'] if engines==['gpu'] else ['cpu']*cpu_workers
     label=' + '.join(engine_label(e) for e in engines)
-    with LOCK: STATE.update(total=len(files),provider=label,workers=len(worker_plan),message=f'Scanning with {label} ({len(worker_plan)} workers, dynamic queue)…')
+    with LOCK:
+        detected=STATE.get('provider') or label
+        STATE.update(total=len(files),provider=detected,workers=len(worker_plan),message=f'Scanning with {label} ({len(worker_plan)} workers, dynamic queue)…')
     work_queue=queue.Queue()
     for p in files: work_queue.put(p)
     completed=0; start=time.perf_counter()
