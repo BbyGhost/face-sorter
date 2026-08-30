@@ -253,6 +253,27 @@ class FaceSorter(tk.Tk):
         except Exception:
             self._finish_gallery_job(generation,ident)
 
+    def _gallery_person_id(self,event):
+        item=self.canvas.find_withtag("current")
+        if not item:return None
+        for tag in self.canvas.gettags(item[0]):
+            if tag.startswith("person:"):
+                try:return int(tag.split(":",1)[1])
+                except ValueError:return None
+        return None
+
+    def _gallery_click(self,event):
+        ident=self._gallery_person_id(event)
+        if ident is None:return
+        ctrl=bool(event.state & 0x0004)
+        if ctrl:
+            if ident in self.selected_ids:self.selected_ids.remove(ident)
+            else:self.selected_ids.add(ident)
+        else:
+            self.selected_ids={ident}
+        self.selection_label.config(text=f"{len(self.selected_ids)} selected")
+        self._update_card_style(ident)
+
     def _gallery_double_click(self,event):
         ident=self._gallery_person_id(event)
         if ident is not None:self.open_person(ident)
