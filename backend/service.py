@@ -25,7 +25,7 @@ DB.execute('CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT)
 LOCK=threading.Lock(); DB_LOCK=threading.RLock(); PEOPLE_LOCK=threading.RLock()
 STATE={'state':'ready','message':'Choose a folder to begin.','total':0,'processed':0,'new':0,'unchanged':0,'failed':0,'faces':0,'speed':0.0,'eta_seconds':None,'provider':'','workers':0,'mode':'auto'}
 EXT={'.jpg','.jpeg','.png','.webp','.bmp','.tif','.tiff'}
-MODEL_VERSION='arcface-buffalo-l-cpu-gpu-v2'
+MODEL_VERSION='arcface-buffalo-l-gpu-fix-v3'
 FACE_APPS={}; FACE_LOCK=threading.RLock()
 cv2.setLogLevel(0)
 app=FastAPI(docs_url=None,redoc_url=None)
@@ -69,7 +69,20 @@ def prepare_model(engine):
     with FACE_LOCK:
         if engine not in FACE_APPS:
             ps=provider_for(engine)
-            model=FaceAnalysis(name='buffalo_l',providers=ps); model.prepare(ctx_id=-1,det_size=(320,320)); FACE_APPS[engine]=model
+            model=FaceAnalysis(name='buffalo_l',providers=ps)
+            # ctx_id=-1 is CPU in InsightFace; use GPU context when GPU mode is requested.
+            ctx_id=0 if engine=='gpu' else -1
+            model.prepare(ctx_id=ctx_id,det_size=(320,320))
+            # Verify the actual ONNX sessions, not only the requested provider list.
+            active=set()
+            for item in getattr(model,'models',{}).values():
+                session=getattr(item,'session',None)
+                if session is not None:
+                    try: active.update(session.get_providers())
+                    except Exception: pass
+            if engine=='gpu' and not ({'DmlExecutionProvider','CUDAExecutionProvider'} & active):
+                raise RuntimeError(f"GPU requested but model sessions are using {sorted(active) or ['unknown']}.")
+            FACE_APPS[engine]=model
     return FACE_APPS[engine]
 def engine_label(engine):
     return 'GPU (DirectML/CUDA)' if engine=='gpu' else 'CPU'
