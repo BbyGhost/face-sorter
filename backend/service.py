@@ -28,7 +28,7 @@ DB.execute('CREATE TABLE IF NOT EXISTS faces(image_path TEXT,person_id INTEGER,P
 DB.execute('CREATE TABLE IF NOT EXISTS face_processed(image_path TEXT PRIMARY KEY)')
 DB.execute('CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT)'); DB.commit()
 LOCK=threading.Lock(); DB_LOCK=threading.RLock(); PEOPLE_LOCK=threading.RLock()
-STATE={'state':'ready','message':'Choose a folder to begin.','total':0,'processed':0,'new':0,'unchanged':0,'failed':0,'faces':0,'speed':0.0,'eta_seconds':None,'provider':'','workers':0,'mode':'auto','last_error':'','last_file':'','last_faces':0,'pause_requested':False,'cancel_requested':False}
+STATE={'state':'ready','message':'Choose a folder to begin.','total':0,'processed':0,'new':0,'unchanged':0,'failed':0,'faces':0,'speed':0.0,'eta_seconds':None,'provider':'','workers':0,'mode':'auto','last_error':'','last_file':'','last_faces':0,'pause_requested':False,'cancel_requested':False,'consolidating':False}
 EXT={'.jpg','.jpeg','.png','.webp','.bmp','.tif','.tiff'}
 MODEL_VERSION='arcface-buffalo-l-cuda-stable-v6'
 FACE_APPS={}; FACE_LOCK=threading.RLock()
@@ -321,10 +321,15 @@ def consolidate_people(threshold=0.62):
 def consolidate_existing():
     with LOCK:
         if STATE['state']=='scanning': raise ValueError('Wait for the current scan to finish.')
+        if STATE.get('consolidating'): raise ValueError('Consolidation is already running.')
+        STATE['consolidating']=True
         STATE['message']='Consolidating same-person groups…'
-    merged=consolidate_people(0.62)
-    with LOCK: STATE['message']=f'Consolidated {merged} duplicate person group(s).'
-    return merged
+    try:
+        merged=consolidate_people(0.62)
+        with LOCK: STATE['message']=f'Consolidated {merged} duplicate person group(s).'
+        return merged
+    finally:
+        with LOCK: STATE['consolidating']=False
 
 def merge_people(ids):
     ids=list(dict.fromkeys(int(x) for x in ids))
