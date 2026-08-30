@@ -129,7 +129,7 @@ class FaceSorter(tk.Tk):
         folder=filedialog.askdirectory(title="Choose an output folder")
         if folder:
             if not messagebox.askyesno("Sort photos", "Create one folder per detected person and copy the matching photos there?\n\nYour original photos will not be changed."):return
-            result=service.export_all_people(folder);messagebox.showinfo("Face Sorter",f"Sorted {result['copied']} photo(s) into {result['groups']} person folder(s):\n{result['folder']}")
+            result=service.export_all_people(folder);messagebox.showinfo("Face Sorter",f"Sorted {result['copied']} photo(s) into {result['groups']} combined person folder(s) from {result.get('original_groups', result['groups'])} detected groups:\n{result['folder']}")
     def check_updates(self):
         def worker():
             try:
