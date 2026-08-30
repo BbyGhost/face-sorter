@@ -1,11 +1,7 @@
 {
-  "version": "2.1.1",
-  "notes": "Add one-click consolidation for existing libraries",
+  "version": "2.2.0",
+  "notes": "Premium modern desktop UI with sidebar, dashboard stats, cleaner scan controls, search, and redesigned preview/export workflow",
   "files": [
-    {
-      "path": "backend/service.py",
-      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/service.py"
-    },
     {
       "path": "desktop.py",
       "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/desktop.py"
