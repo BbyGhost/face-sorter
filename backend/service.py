@@ -26,7 +26,9 @@ DB.execute('CREATE TABLE IF NOT EXISTS images(path TEXT PRIMARY KEY,modified_ns 
 DB.execute('CREATE TABLE IF NOT EXISTS people(id INTEGER PRIMARY KEY,name TEXT UNIQUE,embedding BLOB,photos INTEGER DEFAULT 0)')
 DB.execute('CREATE TABLE IF NOT EXISTS faces(image_path TEXT,person_id INTEGER,PRIMARY KEY(image_path,person_id))')
 DB.execute('CREATE TABLE IF NOT EXISTS face_processed(image_path TEXT PRIMARY KEY)')
-DB.execute('CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT)'); DB.commit()
+DB.execute('CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT)')
+DB.execute('CREATE TABLE IF NOT EXISTS person_embeddings(person_id INTEGER NOT NULL,embedding BLOB NOT NULL,created_at TEXT,PRIMARY KEY(person_id,embedding))')
+DB.commit()
 LOCK=threading.Lock(); DB_LOCK=threading.RLock(); PEOPLE_LOCK=threading.RLock()
 STATE={'state':'ready','message':'Choose a folder to begin.','total':0,'processed':0,'new':0,'unchanged':0,'failed':0,'faces':0,'speed':0.0,'eta_seconds':None,'provider':'','workers':0,'mode':'auto','last_error':'','last_file':'','last_faces':0,'pause_requested':False,'cancel_requested':False,'consolidating':False}
 EXT={'.jpg','.jpeg','.png','.webp','.bmp','.tif','.tiff'}
@@ -104,11 +106,24 @@ def mode_plan(mode):
         return ['gpu','cpu']
     return ['gpu'] if has_gpu else ['cpu']
 def migrate_model_index():
+    # Identity memory survives incremental scans. Model changes invalidate
+    # assignments, but not the learned person prototypes.
     with DB_LOCK:
         row=DB.execute('SELECT value FROM settings WHERE key=?',('face_model',)).fetchone()
-        if row and row[0]==MODEL_VERSION:return
-        DB.execute('DELETE FROM faces');DB.execute('DELETE FROM face_processed');DB.execute('DELETE FROM people')
-        DB.execute('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)',('face_model',MODEL_VERSION));DB.commit()
+        if not row:
+            DB.execute('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)',('face_model',MODEL_VERSION))
+        elif row[0]!=MODEL_VERSION:
+            DB.execute('DELETE FROM faces'); DB.execute('DELETE FROM face_processed')
+            DB.execute('UPDATE people SET photos=0')
+            DB.execute('DELETE FROM settings WHERE key=?',('face_model',))
+            DB.execute('INSERT INTO settings(key,value) VALUES(?,?)',('face_model',MODEL_VERSION))
+        rows=DB.execute('SELECT id,embedding FROM people WHERE embedding IS NOT NULL').fetchall()
+        for ident,raw in rows:
+            if not DB.execute('SELECT 1 FROM person_embeddings WHERE person_id=? LIMIT 1',(ident,)).fetchone():
+                DB.execute('INSERT OR IGNORE INTO person_embeddings(person_id,embedding,created_at) VALUES(?,?,?)',
+                           (ident,raw,datetime.now(timezone.utc).isoformat()))
+        DB.commit()
+
 def descriptors(file,engine):
     try:
         raw=np.fromfile(str(file),dtype=np.uint8); image=cv2.imdecode(raw,cv2.IMREAD_COLOR)
@@ -125,26 +140,70 @@ def descriptors(file,engine):
         with LOCK: STATE['last_error']=f"{Path(file).name}: {error}"
         return []
 def load_people():
-    with DB_LOCK: rows=DB.execute('SELECT id,name,embedding,photos FROM people').fetchall()
+    with DB_LOCK:
+        rows=DB.execute('SELECT id,name,embedding,photos FROM people').fetchall()
+        proto_rows=DB.execute('SELECT person_id,embedding FROM person_embeddings').fetchall()
     result={}
     for ident,name,raw,photos in rows:
-        if raw:
-            vec=np.frombuffer(raw,dtype=np.float32).copy(); vec/=np.linalg.norm(vec)+1e-8
-            result[int(ident)]={'name':name,'embedding':vec,'photos':int(photos or 0)}
+        if not raw: continue
+        vec=np.frombuffer(raw,dtype=np.float32).copy(); vec/=np.linalg.norm(vec)+1e-8
+        result[int(ident)]={'name':name,'embedding':vec,'photos':int(photos or 0),'prototypes':[]}
+    for ident,raw in proto_rows:
+        if int(ident) in result:
+            v=np.frombuffer(raw,dtype=np.float32).copy(); v/=np.linalg.norm(v)+1e-8
+            result[int(ident)]['prototypes'].append(v)
+    for p in result.values():
+        if not p['prototypes']: p['prototypes']=[p['embedding'].copy()]
     return result
+
+def _remember_prototype(ident,vector,person):
+    prototypes=person.setdefault('prototypes',[person['embedding'].copy()])
+    best=max(float(x@vector) for x in prototypes)
+    if best>=0.965: return
+    if len(prototypes)<12:
+        prototypes.append(vector.copy())
+        with DB_LOCK:
+            DB.execute('INSERT OR IGNORE INTO person_embeddings(person_id,embedding,created_at) VALUES(?,?,?)',
+                       (ident,vector.astype(np.float32).tobytes(),datetime.now(timezone.utc).isoformat()))
+    else:
+        # Keep the most useful diversity of appearances.
+        sims=[float(x@vector) for x in prototypes]
+        replace=int(np.argmin(sims)); old=prototypes[replace]; prototypes[replace]=vector.copy()
+        with DB_LOCK:
+            DB.execute('DELETE FROM person_embeddings WHERE person_id=? AND embedding=?',
+                       (ident,old.astype(np.float32).tobytes()))
+            DB.execute('INSERT OR IGNORE INTO person_embeddings(person_id,embedding,created_at) VALUES(?,?,?)',
+                       (ident,vector.astype(np.float32).tobytes(),datetime.now(timezone.utc).isoformat()))
+
 def match(vector,people):
     if not people:
         with DB_LOCK:
-            ident=DB.execute('SELECT COALESCE(MAX(id),0)+1 FROM people').fetchone()[0]
-            DB.execute('INSERT INTO people(id,name,embedding,photos) VALUES(?,?,?,0)',(ident,f'Person {ident}',vector.tobytes()))
-        people[ident]={'name':f'Person {ident}','embedding':vector.copy(),'photos':0}; return ident
-    ids=list(people); matrix=np.stack([people[i]['embedding'] for i in ids]); scores=matrix@vector; idx=int(np.argmax(scores)); score=float(scores[idx])
-    if score>=0.58:
-        ident=ids[idx]; p=people[ident]; count=p['photos']; updated=(p['embedding']*count+vector)/(count+1); updated/=np.linalg.norm(updated)+1e-8; p['embedding']=updated; p['photos']=count+1; return ident
+            ident=int(DB.execute('SELECT COALESCE(MAX(id),0)+1 FROM people').fetchone()[0])
+            raw=vector.astype(np.float32).tobytes()
+            DB.execute('INSERT INTO people(id,name,embedding,photos) VALUES(?,?,?,0)',(ident,f'Person {ident}',raw))
+            DB.execute('INSERT OR IGNORE INTO person_embeddings(person_id,embedding,created_at) VALUES(?,?,?)',
+                       (ident,raw,datetime.now(timezone.utc).isoformat()))
+        people[ident]={'name':f'Person {ident}','embedding':vector.copy(),'photos':0,'prototypes':[vector.copy()]}
+        return ident
+    best_id=None; best_score=-1.0
+    for ident,p in people.items():
+        score=max(float(proto@vector) for proto in (p.get('prototypes') or [p['embedding']]))
+        if score>best_score: best_score=score; best_id=ident
+    if best_id is not None and best_score>=0.58:
+        p=people[best_id]; count=p['photos']
+        updated=(p['embedding']*count+vector)/(count+1); updated/=np.linalg.norm(updated)+1e-8
+        p['embedding']=updated; p['photos']=count+1
+        _remember_prototype(best_id,vector,p)
+        return best_id
     with DB_LOCK:
         ident=int(DB.execute('SELECT COALESCE(MAX(id),0) FROM people').fetchone()[0])+1
-        DB.execute('INSERT INTO people(id,name,embedding,photos) VALUES(?,?,?,0)',(ident,f'Person {ident}',vector.tobytes()))
-    people[ident]={'name':f'Person {ident}','embedding':vector.copy(),'photos':0}; return ident
+        raw=vector.astype(np.float32).tobytes()
+        DB.execute('INSERT INTO people(id,name,embedding,photos) VALUES(?,?,?,0)',(ident,f'Person {ident}',raw))
+        DB.execute('INSERT OR IGNORE INTO person_embeddings(person_id,embedding,created_at) VALUES(?,?,?)',
+                   (ident,raw,datetime.now(timezone.utc).isoformat()))
+    people[ident]={'name':f'Person {ident}','embedding':vector.copy(),'photos':0,'prototypes':[vector.copy()]}
+    return ident
+
 def persist_people(people):
     with DB_LOCK:
         for ident,p in people.items():
@@ -313,7 +372,7 @@ def consolidate_people(threshold=0.62):
             for i in members:
                 if i==target: continue
                 DB.execute('UPDATE faces SET person_id=? WHERE person_id=?',(target_id,ids[i]))
-                DB.execute('DELETE FROM people WHERE id=?',(ids[i],)); merged+=1
+                DB.execute('DELETE FROM person_embeddings WHERE person_id=?',(ids[i],)); DB.execute('DELETE FROM people WHERE id=?',(ids[i],)); merged+=1
             DB.execute('UPDATE people SET photos=(SELECT COUNT(DISTINCT image_path) FROM faces WHERE person_id=people.id) WHERE id=?',(target_id,))
         DB.commit()
     return merged
@@ -344,7 +403,7 @@ def merge_people(ids):
         for r in rows:
             if int(r[0])!=target_id:
                 DB.execute('UPDATE faces SET person_id=? WHERE person_id=?',(target_id,int(r[0])))
-                DB.execute('DELETE FROM people WHERE id=?',(int(r[0]),))
+                DB.execute('DELETE FROM person_embeddings WHERE person_id=?',(int(r[0]),)); DB.execute('DELETE FROM people WHERE id=?',(int(r[0]),))
         DB.execute('UPDATE people SET photos=(SELECT COUNT(DISTINCT image_path) FROM faces WHERE person_id=people.id) WHERE id=?',(target_id,)); DB.commit()
     return target_id
 
