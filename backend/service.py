@@ -7,8 +7,13 @@ from pathlib import Path
 import cv2
 import numpy as np
 try:
-    from insightface.app import FaceAnalysis
     import onnxruntime as ort
+    # ORT 1.21+ can preload CUDA/cuDNN DLLs from NVIDIA Python packages.
+    # Do this before InsightFace creates any ONNX sessions.
+    if hasattr(ort,'preload_dlls'):
+        try: ort.preload_dlls(directory="")
+        except Exception: pass
+    from insightface.app import FaceAnalysis
 except ImportError:
     FaceAnalysis=None; ort=None
 from fastapi import FastAPI, HTTPException
