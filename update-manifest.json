@@ -1,22 +1,18 @@
 {
-  "version": "1.6.0",
-  "notes": "Fix DirectML reshape failures by preferring NVIDIA CUDA and add one-click CUDA setup",
+  "version": "1.7.0",
+  "notes": "Fix missing CUDA DLLs by preloading NVIDIA Python runtime libraries",
   "files": [
     {
       "path": "backend/service.py",
       "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/service.py"
     },
     {
-      "path": "backend/requirements.txt",
-      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/requirements.txt"
+      "path": "setup-nvidia-gpu.ps1",
+      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/setup-nvidia-gpu.ps1"
     },
     {
       "path": "updater.py",
       "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/updater.py"
-    },
-    {
-      "path": "setup-nvidia-gpu.ps1",
-      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/setup-nvidia-gpu.ps1"
     }
   ]
 }
