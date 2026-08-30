@@ -1,18 +1,14 @@
 {
-  "version": "1.9.0",
-  "notes": "Stabilize CUDA cuDNN execution, pin cuDNN 9.7.1, and avoid concurrent GPU session runs",
+  "version": "2.0.0",
+  "notes": "Combine same-person face clusters into one folder during export",
   "files": [
     {
       "path": "backend/service.py",
       "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/service.py"
     },
     {
-      "path": "backend/requirements.txt",
-      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/requirements.txt"
-    },
-    {
-      "path": "setup-nvidia-gpu.ps1",
-      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/setup-nvidia-gpu.ps1"
+      "path": "desktop.py",
+      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/desktop.py"
     },
     {
       "path": "updater.py",
