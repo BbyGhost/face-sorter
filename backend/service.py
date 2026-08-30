@@ -182,6 +182,12 @@ def scan(folder,mode='auto'):
     def process(e):
         nonlocal completed
         while True:
+            while True:
+                with LOCK:
+                    paused=STATE.get('pause_requested',False); cancelled=STATE.get('cancel_requested',False)
+                if cancelled:return
+                if not paused:break
+                time.sleep(0.15)
             try: file=work_queue.get_nowait()
             except queue.Empty: return
             try:
@@ -218,9 +224,16 @@ def scan(folder,mode='auto'):
     for t in threads:t.start()
     for t in threads:t.join()
     persist_people(people)
-    with DB_LOCK: DB.execute('UPDATE people SET photos=(SELECT COUNT(DISTINCT image_path) FROM faces WHERE person_id=people.id)'); DB.execute('DELETE FROM people WHERE photos=0'); DB.commit()
+    with DB_LOCK:
+        DB.execute('UPDATE people SET photos=(SELECT COUNT(DISTINCT image_path) FROM faces WHERE person_id=people.id)')
+        DB.execute('DELETE FROM people WHERE photos=0'); DB.commit()
+    if STATE.get('cancel_requested'):
+        with LOCK: STATE.update(state='cancelled',message=f'Scan stopped — {completed:,} photos processed.')
+        return
+    with LOCK: STATE['message']='Consolidating same-person groups…'
+    consolidate_people(0.62)
     elapsed=max(time.perf_counter()-start,.001)
-    with LOCK: STATE.update(state='complete',message=f'Face scan complete — {completed:,} photos processed.',speed=completed/elapsed,eta_seconds=0)
+    with LOCK: STATE.update(state='complete',message=f'Face scan complete — {completed:,} photos processed and groups consolidated.',speed=completed/elapsed,eta_seconds=0,pause_requested=False,cancel_requested=False)
 @app.get('/')
 def home(): return FileResponse(ROOT/'web'/'index.html')
 @app.get('/api/status')
@@ -356,6 +369,29 @@ def reset_library():
         for table in ('faces','face_processed','people','images'): DB.execute(f'DELETE FROM {table}')
         DB.commit()
     with LOCK: STATE.update(state='ready',message='Library cleared. Choose a folder to scan.',total=0,processed=0,new=0,unchanged=0,failed=0,faces=0,speed=0.0,eta_seconds=None)
+@app.post('/api/pause')
+def pause_scan():
+    with LOCK:
+        if STATE['state']!='scanning': raise HTTPException(409,'No scan is running.')
+        STATE['pause_requested']=True; STATE['message']='Scan paused.'
+    return {'ok':True}
+@app.post('/api/resume')
+def resume_scan():
+    with LOCK:
+        if STATE['state']!='scanning': raise HTTPException(409,'No scan is running.')
+        STATE['pause_requested']=False; STATE['message']='Resuming scan…'
+    return {'ok':True}
+@app.post('/api/cancel')
+def cancel_scan():
+    with LOCK:
+        if STATE['state']!='scanning': raise HTTPException(409,'No scan is running.')
+        STATE['cancel_requested']=True; STATE['pause_requested']=False; STATE['message']='Stopping scan…'
+    return {'ok':True}
+@app.post('/api/people/merge')
+def merge_selected(body:dict):
+    try:return {'ok':True,'target':merge_people(body.get('ids',[]))}
+    except ValueError as error:raise HTTPException(400,str(error))
+
 @app.post('/api/people/{person_id}/rename')
 def rename(person_id:int,body:dict):
     name=str(body.get('name','')).strip()
