@@ -168,7 +168,7 @@ def scan(folder,mode='auto'):
     # CUDA supports concurrent inference calls; use two GPU workers to keep the NVIDIA device fed.
     # CPU inference uses several workers. Both-mode shares one queue so the faster engine gets more work.
     if mode=='cpu': worker_plan=['cpu']*cpu_workers
-    elif mode=='gpu': worker_plan=['gpu']*2
+    elif mode=='gpu': worker_plan=['gpu']*2*2
     elif mode=='both': worker_plan=['gpu']*2+['cpu']*min(2,cpu_workers)
     else: worker_plan=['gpu']*2 if engines==['gpu'] else ['cpu']*cpu_workers
     label=' + '.join(engine_label(e) for e in engines)
