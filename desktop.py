@@ -28,17 +28,40 @@ class FaceSorter(tk.Tk):
         self.selected_mode_label=tk.StringVar(value="Selected: Auto (GPU preferred)")
         ttk.Label(scanbar,textvariable=self.selected_mode_label,style="Sub.TLabel").pack(side="left",padx=(12,0))
         ttk.Label(scanbar,text="GPU mode requires DirectML/CUDA.",style="Sub.TLabel").pack(side="left",padx=(12,0))
-        ttk.Button(outer,text="Start face scan",command=self.start).pack(anchor="w"); self.progress=ttk.Progressbar(outer,mode="determinate",maximum=100); self.progress.pack(fill="x",pady=(15,6)); ttk.Label(outer,textvariable=self.status,style="Sub.TLabel").pack(anchor="w")
+        scan_controls=ttk.Frame(outer); scan_controls.pack(anchor="w")
+ttk.Button(scan_controls,text="Start face scan",command=self.start).pack(side="left")
+ttk.Button(scan_controls,text="Pause",command=self.pause_scan).pack(side="left",padx=(8,0))
+ttk.Button(scan_controls,text="Resume",command=self.resume_scan).pack(side="left",padx=(8,0))
+ttk.Button(scan_controls,text="Stop",command=self.stop_scan).pack(side="left",padx=(8,0))
+self.progress=ttk.Progressbar(outer,mode="determinate",maximum=100); self.progress.pack(fill="x",pady=(15,6)); ttk.Label(outer,textvariable=self.status,style="Sub.TLabel").pack(anchor="w")
         ttk.Separator(outer).pack(fill="x",pady=18); content=ttk.Frame(outer); content.pack(fill="both",expand=True)
         left=ttk.Frame(content); left.pack(side="left",fill="both",expand=True,padx=(0,18)); ttk.Label(left,text="People found",font=("Segoe UI",15,"bold")).pack(anchor="w"); ttk.Label(left,text="Select a group to see its photos.",style="Sub.TLabel").pack(anchor="w",pady=(3,8))
         people_box=ttk.Frame(left); people_box.pack(fill="both",expand=True)
-        self.people=tk.Listbox(people_box,height=12,bg="#1c1f27",fg="#f3f1f8",selectbackground="#7458b5",borderwidth=0,font=("Segoe UI",11))
+        self.people=tk.Listbox(people_box,height=12,bg="#1c1f27",fg="#f3f1f8",selectbackground="#7458b5",borderwidth=0,font=("Segoe UI",11),selectmode="extended")
         people_scroll=ttk.Scrollbar(people_box,orient="vertical",command=self.people.yview)
         self.people.configure(yscrollcommand=people_scroll.set); self.people.pack(side="left",fill="both",expand=True); people_scroll.pack(side="right",fill="y")
-        self.people.bind("<<ListboxSelect>>",self.select_person); ttk.Button(left,text="Rename selected",command=self.rename).pack(anchor="w",pady=(10,0))
+        self.people.bind("<<ListboxSelect>>",self.select_person); people_actions=ttk.Frame(left); people_actions.pack(fill="x",pady=(10,0)); ttk.Button(people_actions,text="Rename selected",command=self.rename).pack(side="left"); ttk.Button(people_actions,text="Merge selected",command=self.merge_selected).pack(side="left",padx=(8,0))
         right=ttk.Frame(content,width=400); right.pack(side="right",fill="both"); right.pack_propagate(False); ttk.Label(right,text="Photo preview",font=("Segoe UI",15,"bold")).pack(anchor="w"); self.preview=tk.Label(right,text="Select a person to view photos",bg="#1c1f27",fg="#adb2bf",width=45,height=18,anchor="center"); self.preview.pack(fill="both",expand=True,pady=(10,8)); self.photo_text=tk.StringVar(value=""); ttk.Label(right,textvariable=self.photo_text,style="Sub.TLabel",wraplength=370).pack(anchor="w")
         controls=ttk.Frame(right); controls.pack(fill="x",pady=(8,0)); ttk.Button(controls,text="◀ Previous",command=lambda:self.move_photo(-1)).pack(side="left"); ttk.Button(controls,text="Next ▶",command=lambda:self.move_photo(1)).pack(side="left",padx=7); ttk.Button(controls,text="Open photo",command=self.open_photo).pack(side="right")
         bottom=ttk.Frame(outer); bottom.pack(fill="x",pady=(16,0)); ttk.Button(bottom,text="Reset library",command=self.reset).pack(side="left"); ttk.Button(bottom,text="Check for updates",command=self.check_updates).pack(side="left",padx=(8,0)); ttk.Button(bottom,text="Sort into person folders",command=self.export_all).pack(side="right"); ttk.Button(bottom,text="Export selected person",command=self.export_selected).pack(side="right",padx=(0,8)); ttk.Button(bottom,text="Export photos without faces",command=self.export).pack(side="right",padx=(0,8))
+    def pause_scan(self):
+        try: service.pause_scan()
+        except Exception as error: messagebox.showwarning("Face Sorter",str(error))
+    def resume_scan(self):
+        try: service.resume_scan()
+        except Exception as error: messagebox.showwarning("Face Sorter",str(error))
+    def stop_scan(self):
+        if messagebox.askyesno("Stop scan","Stop the current scan? Completed results will be kept."):
+            try: service.cancel_scan()
+            except Exception as error: messagebox.showwarning("Face Sorter",str(error))
+    def merge_selected(self):
+        selected=self.people.curselection()
+        if len(selected)<2:return messagebox.showinfo("Merge people","Select two or more people using Ctrl-click or Shift-click.")
+        ids=[self.groups[i]['id'] for i in selected]
+        if not messagebox.askyesno("Merge people",f"Merge {len(ids)} selected groups into one person?\n\nTheir photos will be combined."):return
+        try:
+            service.merge_people(ids); self.group_signature=[]; self.people.selection_clear(0,tk.END)
+        except ValueError as error: messagebox.showerror("Merge people",str(error))
     def choose(self):
         folder=filedialog.askdirectory(title="Choose your photo folder")
         if folder:self.folder.set(folder)
