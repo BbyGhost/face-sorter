@@ -25,7 +25,7 @@ DB.execute('CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT)
 LOCK=threading.Lock(); DB_LOCK=threading.RLock(); PEOPLE_LOCK=threading.RLock()
 STATE={'state':'ready','message':'Choose a folder to begin.','total':0,'processed':0,'new':0,'unchanged':0,'failed':0,'faces':0,'speed':0.0,'eta_seconds':None,'provider':'','workers':0,'mode':'auto','last_error':'','last_file':'','last_faces':0}
 EXT={'.jpg','.jpeg','.png','.webp','.bmp','.tif','.tiff'}
-MODEL_VERSION='arcface-buffalo-l-gpu-fix-v3'
+MODEL_VERSION='arcface-buffalo-l-cuda-v4'
 FACE_APPS={}; FACE_LOCK=threading.RLock()
 cv2.setLogLevel(0)
 app=FastAPI(docs_url=None,redoc_url=None)
@@ -60,9 +60,10 @@ def normalize_mode(mode):
 def provider_for(engine):
     av=set(providers())
     if engine=='gpu':
-        if 'DmlExecutionProvider' in av:return ['DmlExecutionProvider','CPUExecutionProvider']
+        # Prefer CUDA on NVIDIA. DirectML remains available for non-CUDA GPUs.
         if 'CUDAExecutionProvider' in av:return ['CUDAExecutionProvider','CPUExecutionProvider']
-        raise RuntimeError('GPU mode requested, but DirectML/CUDA is unavailable.')
+        if 'DmlExecutionProvider' in av:return ['DmlExecutionProvider','CPUExecutionProvider']
+        raise RuntimeError('GPU mode requested, but CUDA/DirectML is unavailable.')
     return ['CPUExecutionProvider']
 def prepare_model(engine):
     if FaceAnalysis is None: raise RuntimeError('Face model is not installed. Run pip install -r backend\\requirements.txt.')
@@ -85,7 +86,7 @@ def prepare_model(engine):
             FACE_APPS[engine]=model
     return FACE_APPS[engine]
 def engine_label(engine):
-    return 'GPU (DirectML/CUDA)' if engine=='gpu' else 'CPU'
+    return 'GPU (CUDA preferred)' if engine=='gpu' else 'CPU'
 def mode_plan(mode):
     av=set(providers()); has_gpu=('DmlExecutionProvider' in av or 'CUDAExecutionProvider' in av)
     if mode=='cpu': return ['cpu']
@@ -114,7 +115,9 @@ def descriptors(file,engine):
         for face in faces:
             emb=np.asarray(face.embedding,dtype=np.float32); emb/=np.linalg.norm(emb)+1e-8; out.append(emb)
         return out
-    except (OSError,ValueError,cv2.error): return []
+    except Exception as error:
+        with LOCK: STATE['last_error']=f"{Path(file).name}: {error}"
+        return []
 def load_people():
     with DB_LOCK: rows=DB.execute('SELECT id,name,embedding,photos FROM people').fetchall()
     result={}
@@ -182,7 +185,9 @@ def scan(folder,mode='auto'):
                     with LOCK:
                         completed+=1; STATE['processed']=completed; STATE['unchanged']+=1
                     continue
+                with LOCK: STATE['last_file']=str(file)
                 vectors=descriptors(file,e)
+                with LOCK: STATE['last_faces']=len(vectors)
                 ids=[]
                 with PEOPLE_LOCK:
                     for v in vectors: ids.append(match(v,people))
@@ -197,9 +202,10 @@ def scan(folder,mode='auto'):
                     completed+=1; STATE['processed']=completed; STATE['new']+=1; STATE['faces']+=len(vectors)
                     elapsed=max(time.perf_counter()-start,.001); speed=completed/elapsed
                     STATE['speed']=speed; STATE['eta_seconds']=max(len(files)-completed,0)/speed
-            except Exception:
+            except Exception as error:
                 with LOCK:
                     completed+=1; STATE['processed']=completed; STATE['failed']+=1
+                    STATE['last_error']=f"{Path(file).name}: {error}"
             finally:
                 work_queue.task_done()
     threads=[threading.Thread(target=process,args=(engine,),daemon=True) for engine in worker_plan]
