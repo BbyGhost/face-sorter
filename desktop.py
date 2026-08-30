@@ -1,139 +1,247 @@
-"""Face Sorter — premium local desktop UI."""
+"""Face Sorter — premium Google Photos inspired desktop UI."""
 from __future__ import annotations
 import os, threading, tkinter as tk, updater
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
-from PIL import Image, ImageTk, UnidentifiedImageError
+from PIL import Image, ImageTk, ImageOps, UnidentifiedImageError
 from backend import service
 
-BG="#0b0d12"; PANEL="#12151d"; PANEL2="#171b24"; BORDER="#252b36"; TEXT="#f5f7fb"; MUTED="#8e98a8"; ACCENT="#8b5cf6"; ACCENT2="#a78bfa"; GREEN="#34d399"; RED="#fb7185"
+BG="#0a0b0f"; SIDEBAR="#0d0f14"; PANEL="#12151c"; PANEL2="#181c25"; CARD="#151922"
+BORDER="#252b36"; TEXT="#f7f8fb"; MUTED="#8d96a6"; ACCENT="#8b5cf6"; ACCENT_H="#7c3aed"
+GREEN="#34d399"; RED="#fb7185"; WHITE="#ffffff"
 
 class FaceSorter(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Face Sorter")
-        self.geometry("1240x820"); self.minsize(1050,700); self.configure(bg=BG)
+        self.geometry("1440x900"); self.minsize(1120,720); self.configure(bg=BG)
         self.folder=tk.StringVar(); self.scan_mode=tk.StringVar(value="Auto (GPU preferred)")
-        self.status=tk.StringVar(value="Ready when you are.")
-        self.search=tk.StringVar(); self.groups=[]; self.group_signature=[]; self.filtered_groups=[]
-        self.photos=[]; self.photo_index=0; self.preview_image=None; self.person_thumb_cache={}; self.last_state=""
-        self._build(); self.after(250,self.refresh)
-
-    def _build(self):
-        self._styles()
-        root=tk.Frame(self,bg=BG); root.pack(fill="both",expand=True)
-        self.sidebar=tk.Frame(root,bg="#0e1117",width=220); self.sidebar.pack(side="left",fill="y"); self.sidebar.pack_propagate(False)
-        self._sidebar()
-        main=tk.Frame(root,bg=BG); main.pack(side="left",fill="both",expand=True)
-        self._header(main); self._workspace(main); self._footer(main)
+        self.status=tk.StringVar(value="Ready to organize your library.")
+        self.search=tk.StringVar()
+        self.groups=[]; self.group_signature=[]; self.filtered_groups=[]
+        self.photos=[]; self.photo_index=0; self.preview_image=None
+        self.thumb_cache={}; self.card_widgets={}; self.selected_ids=set()
+        self.last_folder=""
+        self._build(); self.after(300,self.refresh)
 
     def _styles(self):
         s=ttk.Style(self); s.theme_use("clam")
-        s.configure("TCombobox",fieldbackground=PANEL2,background=PANEL2,foreground=TEXT,arrowcolor=MUTED,bordercolor=BORDER,lightcolor=BORDER,darkcolor=BORDER)
+        s.configure("TCombobox",fieldbackground=PANEL2,background=PANEL2,foreground=TEXT,arrowcolor=MUTED,
+                    bordercolor=BORDER,lightcolor=BORDER,darkcolor=BORDER,padding=8)
         s.map("TCombobox",fieldbackground=[("readonly",PANEL2)],foreground=[("readonly",TEXT)])
         s.configure("TProgressbar",troughcolor=PANEL2,background=ACCENT,darkcolor=ACCENT,lightcolor=ACCENT,bordercolor=PANEL2)
 
     def button(self,parent,text,command,primary=False,width=None):
-        b=tk.Button(parent,text=text,command=command,bg=ACCENT if primary else PANEL2,fg="white",activebackground="#7c3aed" if primary else "#202633",activeforeground="white",relief="flat",bd=0,font=("Segoe UI",10,"bold"),cursor="hand2",padx=14,pady=9)
+        b=tk.Button(parent,text=text,command=command,bg=ACCENT if primary else PANEL2,fg=WHITE,
+                    activebackground=ACCENT_H if primary else "#202633",activeforeground=WHITE,
+                    relief="flat",bd=0,font=("Segoe UI",10,"bold"),cursor="hand2",padx=14,pady=9)
         if width:b.config(width=width)
         return b
 
+    def _build(self):
+        self._styles()
+        root=tk.Frame(self,bg=BG); root.pack(fill="both",expand=True)
+        self.sidebar=tk.Frame(root,bg=SIDEBAR,width=238); self.sidebar.pack(side="left",fill="y"); self.sidebar.pack_propagate(False)
+        self._sidebar()
+        main=tk.Frame(root,bg=BG); main.pack(side="left",fill="both",expand=True)
+        self._topbar(main); self._scan_card(main); self._stats(main)
+        self._gallery_area(main); self._bottom_bar(main)
+
     def _sidebar(self):
-        tk.Label(self.sidebar,text="◈",bg="#0e1117",fg=ACCENT2,font=("Segoe UI",28,"bold")).pack(anchor="w",padx=24,pady=(25,0))
-        tk.Label(self.sidebar,text="FACE SORTER",bg="#0e1117",fg=TEXT,font=("Segoe UI",12,"bold")).pack(anchor="w",padx=24)
-        tk.Label(self.sidebar,text="PRIVATE • LOCAL • FAST",bg="#0e1117",fg=MUTED,font=("Segoe UI",8,"bold")).pack(anchor="w",padx=24,pady=(2,30))
-        self._nav_label("▣  Library",True)
-        self._nav_label("◉  People")
-        self._nav_label("↗  Export")
-        tk.Frame(self.sidebar,bg=BORDER,height=1).pack(fill="x",padx=20,pady=22)
-        tk.Label(self.sidebar,text="WORKFLOW",bg="#0e1117",fg=MUTED,font=("Segoe UI",8,"bold")).pack(anchor="w",padx=24,pady=(0,10))
-        tk.Label(self.sidebar,text="1  Choose folder",bg="#0e1117",fg="#cbd2dd",font=("Segoe UI",10)).pack(anchor="w",padx=24,pady=5)
-        tk.Label(self.sidebar,text="2  Scan faces",bg="#0e1117",fg="#cbd2dd",font=("Segoe UI",10)).pack(anchor="w",padx=24,pady=5)
-        tk.Label(self.sidebar,text="3  Review & merge",bg="#0e1117",fg="#cbd2dd",font=("Segoe UI",10)).pack(anchor="w",padx=24,pady=5)
-        tk.Label(self.sidebar,text="4  Export folders",bg="#0e1117",fg="#cbd2dd",font=("Segoe UI",10)).pack(anchor="w",padx=24,pady=5)
-        bottom=tk.Frame(self.sidebar,bg="#0e1117"); bottom.pack(side="bottom",fill="x",padx=20,pady=20)
+        tk.Label(self.sidebar,text="◈",bg=SIDEBAR,fg="#a78bfa",font=("Segoe UI",30,"bold")).pack(anchor="w",padx=24,pady=(24,0))
+        tk.Label(self.sidebar,text="FACE SORTER",bg=SIDEBAR,fg=TEXT,font=("Segoe UI",12,"bold")).pack(anchor="w",padx=24)
+        tk.Label(self.sidebar,text="PRIVATE • ON-DEVICE AI",bg=SIDEBAR,fg=MUTED,font=("Segoe UI",8,"bold")).pack(anchor="w",padx=24,pady=(2,28))
+        self.nav_people=tk.Label(self.sidebar,text="  ◉   People",bg="#211a32",fg=TEXT,font=("Segoe UI",10,"bold"),anchor="w",padx=14,pady=11)
+        self.nav_people.pack(fill="x",padx=12,pady=3)
+        self.nav_library=tk.Label(self.sidebar,text="  ▦   All photos",bg=SIDEBAR,fg=MUTED,font=("Segoe UI",10),anchor="w",padx=14,pady=11)
+        self.nav_library.pack(fill="x",padx=12,pady=3)
+        tk.Frame(self.sidebar,bg=BORDER,height=1).pack(fill="x",padx=20,pady=20)
+        tk.Label(self.sidebar,text="WORKFLOW",bg=SIDEBAR,fg=MUTED,font=("Segoe UI",8,"bold")).pack(anchor="w",padx=24,pady=(0,8))
+        for text in ("01  Choose folder","02  Scan faces","03  Review people","04  Export"):
+            tk.Label(self.sidebar,text=text,bg=SIDEBAR,fg="#c4cbd6",font=("Segoe UI",9)).pack(anchor="w",padx=24,pady=5)
+        bottom=tk.Frame(self.sidebar,bg=SIDEBAR); bottom.pack(side="bottom",fill="x",padx=20,pady=20)
         self.button(bottom,"⚙  Settings",self.show_settings).pack(fill="x")
-        tk.Label(bottom,text="v2.2 • On-device AI",bg="#0e1117",fg=MUTED,font=("Segoe UI",8)).pack(anchor="w",pady=(12,0))
+        tk.Label(bottom,text="v3.0 • Local AI",bg=SIDEBAR,fg=MUTED,font=("Segoe UI",8)).pack(anchor="w",pady=(11,0))
 
-    def _nav_label(self,text,active=False):
-        tk.Label(self.sidebar,text=text,bg="#211a32" if active else "#0e1117",fg=TEXT if active else MUTED,font=("Segoe UI",10,"bold" if active else "normal"),anchor="w",padx=18,pady=10).pack(fill="x",padx=12,pady=2)
+    def _topbar(self,main):
+        bar=tk.Frame(main,bg=BG); bar.pack(fill="x",padx=30,pady=(24,14))
+        left=tk.Frame(bar,bg=BG); left.pack(side="left",fill="x",expand=True)
+        tk.Label(left,text="People",bg=BG,fg=TEXT,font=("Segoe UI",26,"bold")).pack(anchor="w")
+        tk.Label(left,text="A private visual library of the people in your photos.",bg=BG,fg=MUTED,font=("Segoe UI",10)).pack(anchor="w",pady=(2,0))
+        pill=tk.Label(bar,text="●  LOCAL & PRIVATE",bg="#12251f",fg=GREEN,font=("Segoe UI",9,"bold"),padx=12,pady=7)
+        pill.pack(side="right",anchor="n")
 
-    def _header(self,main):
-        head=tk.Frame(main,bg=BG); head.pack(fill="x",padx=30,pady=(25,18))
-        left=tk.Frame(head,bg=BG); left.pack(side="left",fill="x",expand=True)
-        tk.Label(left,text="Your photo library",bg=BG,fg=TEXT,font=("Segoe UI",25,"bold")).pack(anchor="w")
-        tk.Label(left,text="Group faces privately on your PC. Nothing is uploaded.",bg=BG,fg=MUTED,font=("Segoe UI",10)).pack(anchor="w",pady=(3,0))
-        pill=tk.Label(head,text="●  LOCAL AI",bg="#13251f",fg=GREEN,font=("Segoe UI",9,"bold"),padx=12,pady=7); pill.pack(side="right",anchor="n")
-
-    def _workspace(self,main):
-        top=tk.Frame(main,bg=BG); top.pack(fill="x",padx=30)
-        card=tk.Frame(top,bg=PANEL,highlightthickness=1,highlightbackground=BORDER); card.pack(fill="x")
-        row=tk.Frame(card,bg=PANEL); row.pack(fill="x",padx=18,pady=16)
-        tk.Label(row,text="PHOTO FOLDER",bg=PANEL,fg=MUTED,font=("Segoe UI",8,"bold")).pack(anchor="w")
+    def _scan_card(self,main):
+        card=tk.Frame(main,bg=PANEL,highlightthickness=1,highlightbackground=BORDER); card.pack(fill="x",padx=30)
+        row=tk.Frame(card,bg=PANEL); row.pack(fill="x",padx=18,pady=14)
+        tk.Label(row,text="PHOTO LIBRARY",bg=PANEL,fg=MUTED,font=("Segoe UI",8,"bold")).pack(anchor="w")
         pathrow=tk.Frame(row,bg=PANEL); pathrow.pack(fill="x",pady=(6,0))
-        self.folder_entry=tk.Entry(pathrow,textvariable=self.folder,bg=PANEL2,fg=TEXT,insertbackground=TEXT,relief="flat",font=("Segoe UI",10))
+        self.folder_entry=tk.Entry(pathrow,textvariable=self.folder,bg=PANEL2,fg=TEXT,insertbackground=TEXT,
+                                    relief="flat",font=("Segoe UI",10),highlightthickness=1,highlightbackground=BORDER)
         self.folder_entry.pack(side="left",fill="x",expand=True,ipady=9,padx=(0,10))
         self.button(pathrow,"Choose folder",self.choose).pack(side="left")
-        scanrow=tk.Frame(card,bg=PANEL); scanrow.pack(fill="x",padx=18,pady=(0,16))
-        tk.Label(scanrow,text="ENGINE",bg=PANEL,fg=MUTED,font=("Segoe UI",8,"bold")).pack(side="left")
-        self.mode_box=ttk.Combobox(scanrow,textvariable=self.scan_mode,state="readonly",width=23,values=("Auto (GPU preferred)","GPU only","CPU only","CPU + GPU"))
-        self.mode_box.pack(side="left",padx=(10,16))
-        self.button(scanrow,"▶  Start scan",self.start,True).pack(side="left")
-        self.button(scanrow,"Ⅱ  Pause",self.pause_scan).pack(side="left",padx=6)
-        self.button(scanrow,"■  Stop",self.stop_scan).pack(side="left")
-        self.engine_label=tk.Label(scanrow,text="GPU preferred • CUDA / DirectML",bg=PANEL,fg=MUTED,font=("Segoe UI",9)); self.engine_label.pack(side="right")
-        prog=tk.Frame(card,bg=PANEL); prog.pack(fill="x",padx=18,pady=(0,16))
+        controls=tk.Frame(card,bg=PANEL); controls.pack(fill="x",padx=18,pady=(0,14))
+        tk.Label(controls,text="ENGINE",bg=PANEL,fg=MUTED,font=("Segoe UI",8,"bold")).pack(side="left")
+        self.mode_box=ttk.Combobox(controls,textvariable=self.scan_mode,state="readonly",width=22,
+                                   values=("Auto (GPU preferred)","GPU only","CPU only","CPU + GPU"))
+        self.mode_box.pack(side="left",padx=(10,14))
+        self.button(controls,"▶  Scan library",self.start,True).pack(side="left")
+        self.button(controls,"Ⅱ  Pause",self.pause_scan).pack(side="left",padx=6)
+        self.button(controls,"■  Stop",self.stop_scan).pack(side="left")
+        self.engine_label=tk.Label(controls,text="Checking engine…",bg=PANEL,fg=MUTED,font=("Segoe UI",9))
+        self.engine_label.pack(side="right")
+        prog=tk.Frame(card,bg=PANEL); prog.pack(fill="x",padx=18,pady=(0,14))
         self.progress=ttk.Progressbar(prog,mode="determinate",maximum=100); self.progress.pack(fill="x")
-        self.status_label=tk.Label(prog,textvariable=self.status,bg=PANEL,fg=MUTED,font=("Segoe UI",9),anchor="w"); self.status_label.pack(fill="x",pady=(7,0))
-        stats=tk.Frame(main,bg=BG); stats.pack(fill="x",padx=30,pady=16)
-        self.stat_people=self._stat(stats,"PEOPLE","0"); self.stat_photos=self._stat(stats,"MATCHED PHOTOS","0"); self.stat_speed=self._stat(stats,"SPEED","—"); self.stat_state=self._stat(stats,"STATUS","READY")
-        body=tk.Frame(main,bg=BG); body.pack(fill="both",expand=True,padx=30)
-        people=tk.Frame(body,bg=PANEL,highlightthickness=1,highlightbackground=BORDER); people.pack(side="left",fill="both",expand=True,padx=(0,10))
-        ph=tk.Frame(people,bg=PANEL); ph.pack(fill="x",padx=16,pady=14)
-        tk.Label(ph,text="People",bg=PANEL,fg=TEXT,font=("Segoe UI",15,"bold")).pack(side="left")
-        self.people_count=tk.Label(ph,text="0 groups",bg=PANEL,fg=MUTED,font=("Segoe UI",9)); self.people_count.pack(side="left",padx=10)
-        searchbox=tk.Entry(ph,textvariable=self.search,bg=PANEL2,fg=TEXT,insertbackground=TEXT,relief="flat",font=("Segoe UI",9),width=24)
-        searchbox.pack(side="right",ipady=7); searchbox.insert(0,""); self.search.trace_add("write",lambda *_:self.render_people())
-        listwrap=tk.Frame(people,bg=PANEL); listwrap.pack(fill="both",expand=True,padx=12,pady=(0,12))
-        self.people=tk.Listbox(listwrap,bg=PANEL,fg=TEXT,selectbackground="#352457",selectforeground="white",highlightthickness=0,bd=0,font=("Segoe UI",10),activestyle="none",selectmode="extended")
-        scroll=ttk.Scrollbar(listwrap,orient="vertical",command=self.people.yview); self.people.configure(yscrollcommand=scroll.set)
-        self.people.pack(side="left",fill="both",expand=True); scroll.pack(side="right",fill="y"); self.people.bind("<<ListboxSelect>>",self.select_person)
-        actions=tk.Frame(people,bg=PANEL); actions.pack(fill="x",padx=14,pady=(0,14))
-        self.button(actions,"Rename",self.rename).pack(side="left"); self.button(actions,"Merge selected",self.merge_selected).pack(side="left",padx=6); self.button(actions,"Consolidate",self.consolidate_existing).pack(side="left")
-        preview=tk.Frame(body,bg=PANEL,highlightthickness=1,highlightbackground=BORDER,width=400); preview.pack(side="right",fill="both"); preview.pack_propagate(False)
-        tk.Label(preview,text="Preview",bg=PANEL,fg=TEXT,font=("Segoe UI",15,"bold")).pack(anchor="w",padx=18,pady=(14,0))
-        self.preview=tk.Label(preview,text="Select a person to preview photos",bg="#0e1117",fg=MUTED,font=("Segoe UI",10),anchor="center"); self.preview.pack(fill="both",expand=True,padx=18,pady=12)
-        self.photo_text=tk.Label(preview,text="",bg=PANEL,fg=MUTED,font=("Segoe UI",8),anchor="w",justify="left"); self.photo_text.pack(fill="x",padx=18)
-        controls=tk.Frame(preview,bg=PANEL); controls.pack(fill="x",padx=18,pady=14)
-        self.button(controls,"‹",lambda:self.move_photo(-1),width=3).pack(side="left"); self.button(controls,"›",lambda:self.move_photo(1),width=3).pack(side="left",padx=5); self.button(controls,"Open original",self.open_photo).pack(side="right")
+        tk.Label(prog,textvariable=self.status,bg=PANEL,fg=MUTED,font=("Segoe UI",9),anchor="w").pack(fill="x",pady=(7,0))
+
+    def _stats(self,main):
+        row=tk.Frame(main,bg=BG); row.pack(fill="x",padx=26,pady=14)
+        self.stat_people=self._stat(row,"PEOPLE","0")
+        self.stat_photos=self._stat(row,"FACES FOUND","0")
+        self.stat_speed=self._stat(row,"SCAN SPEED","—")
+        self.stat_state=self._stat(row,"STATUS","READY")
 
     def _stat(self,parent,label,value):
         card=tk.Frame(parent,bg=PANEL,highlightthickness=1,highlightbackground=BORDER); card.pack(side="left",fill="x",expand=True,padx=4)
-        tk.Label(card,text=label,bg=PANEL,fg=MUTED,font=("Segoe UI",8,"bold")).pack(anchor="w",padx=14,pady=(10,0))
-        var=tk.StringVar(value=value); tk.Label(card,textvariable=var,bg=PANEL,fg=TEXT,font=("Segoe UI",16,"bold")).pack(anchor="w",padx=14,pady=(2,10))
+        tk.Label(card,text=label,bg=PANEL,fg=MUTED,font=("Segoe UI",8,"bold")).pack(anchor="w",padx=15,pady=(10,0))
+        var=tk.StringVar(value=value); tk.Label(card,textvariable=var,bg=PANEL,fg=TEXT,font=("Segoe UI",17,"bold")).pack(anchor="w",padx=15,pady=(2,10))
         return var
 
-    def _footer(self,main):
-        bar=tk.Frame(main,bg=BG); bar.pack(fill="x",padx=30,pady=(12,20))
-        self.button(bar,"↻  Reset library",self.reset).pack(side="left")
+    def _gallery_area(self,main):
+        head=tk.Frame(main,bg=BG); head.pack(fill="x",padx=30,pady=(2,8))
+        tk.Label(head,text="People",bg=BG,fg=TEXT,font=("Segoe UI",16,"bold")).pack(side="left")
+        self.people_count=tk.Label(head,text="0 people",bg=BG,fg=MUTED,font=("Segoe UI",9)); self.people_count.pack(side="left",padx=10)
+        searchwrap=tk.Frame(head,bg=PANEL2,highlightthickness=1,highlightbackground=BORDER); searchwrap.pack(side="right")
+        tk.Label(searchwrap,text="⌕",bg=PANEL2,fg=MUTED,font=("Segoe UI",14)).pack(side="left",padx=(9,3))
+        searchbox=tk.Entry(searchwrap,textvariable=self.search,bg=PANEL2,fg=TEXT,insertbackground=TEXT,
+                            relief="flat",bd=0,font=("Segoe UI",9),width=28)
+        searchbox.pack(side="left",ipady=8,padx=(0,8))
+        self.search.trace_add("write",lambda *_:self.render_gallery())
+        self.gallery_host=tk.Frame(main,bg=BG); self.gallery_host.pack(fill="both",expand=True,padx=30)
+        self.canvas=tk.Canvas(self.gallery_host,bg=BG,highlightthickness=0,bd=0)
+        self.scrollbar=ttk.Scrollbar(self.gallery_host,orient="vertical",command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.canvas.pack(side="left",fill="both",expand=True); self.scrollbar.pack(side="right",fill="y")
+        self.gallery=tk.Frame(self.canvas,bg=BG)
+        self.gallery_window=self.canvas.create_window((0,0),window=self.gallery,anchor="nw")
+        self.gallery.bind("<Configure>",lambda e:self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>",self._resize_gallery)
+        self.canvas.bind_all("<MouseWheel>",self._wheel)
+        self._empty_gallery()
+
+    def _resize_gallery(self,event):
+        self.canvas.itemconfigure(self.gallery_window,width=event.width)
+
+    def _wheel(self,event):
+        if self.canvas.winfo_exists(): self.canvas.yview_scroll(int(-event.delta/120),"units")
+
+    def _empty_gallery(self):
+        for w in self.gallery.winfo_children():w.destroy()
+        box=tk.Frame(self.gallery,bg=PANEL,highlightthickness=1,highlightbackground=BORDER)
+        box.pack(fill="x",padx=2,pady=2)
+        tk.Label(box,text="Your people will appear here",bg=PANEL,fg=TEXT,font=("Segoe UI",15,"bold")).pack(pady=(55,5))
+        tk.Label(box,text="Choose a photo folder and start a scan to build your visual library.",bg=PANEL,fg=MUTED,font=("Segoe UI",10)).pack(pady=(0,55))
+
+    def _thumbnail(self,path,size=190):
+        key=(path,size)
+        if key in self.thumb_cache:return self.thumb_cache[key]
+        try:
+            with Image.open(path) as im:
+                im=ImageOps.fit(im.convert("RGB"),(size,size),method=Image.Resampling.LANCZOS)
+                photo=ImageTk.PhotoImage(im)
+            self.thumb_cache[key]=photo; return photo
+        except (OSError,UnidentifiedImageError): return None
+
+    def render_gallery(self):
+        query=self.search.get().strip().lower()
+        self.filtered_groups=[g for g in self.groups if not query or query in g["name"].lower()]
+        for w in self.gallery.winfo_children():w.destroy()
+        self.card_widgets={}; self.people_count.config(text=f"{len(self.filtered_groups):,} people")
+        if not self.filtered_groups:
+            self._empty_gallery(); return
+        width=max(self.canvas.winfo_width(),900); cols=max(3,min(6,width//220))
+        for idx,g in enumerate(self.filtered_groups):
+            r,c=divmod(idx,cols)
+            self._person_card(g,r,c)
+        self.gallery.update_idletasks()
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _person_card(self,g,row,col):
+        selected=g["id"] in self.selected_ids
+        card=tk.Frame(self.gallery,bg="#251b3a" if selected else CARD,highlightthickness=1,
+                      highlightbackground=ACCENT if selected else BORDER,cursor="hand2")
+        card.grid(row=row,column=col,sticky="nsew",padx=6,pady=6)
+        self.card_widgets[g["id"]]=card
+        imgs=service.person_images(g["id"])
+        thumb=self._thumbnail(imgs[0],190) if imgs else None
+        if thumb:
+            image_label=tk.Label(card,image=thumb,bg=CARD); image_label.image=thumb
+        else:
+            image_label=tk.Label(card,text="◉",bg=CARD,fg=MUTED,font=("Segoe UI",32))
+        image_label.pack(fill="x",padx=5,pady=5)
+        info=tk.Frame(card,bg="#251b3a" if selected else CARD); info.pack(fill="x",padx=5,pady=(0,5))
+        tk.Label(info,text=g["name"],bg=info["bg"],fg=TEXT,font=("Segoe UI",10,"bold"),anchor="w").pack(fill="x",padx=7,pady=(6,0))
+        tk.Label(info,text=f"{g['photos']:,} photos",bg=info["bg"],fg=MUTED,font=("Segoe UI",8),anchor="w").pack(fill="x",padx=7,pady=(1,7))
+        for widget in (card,image_label,info):
+            widget.bind("<Button-1>",lambda e,ident=g["id"]:self.card_click(ident,e))
+            widget.bind("<Double-Button-1>",lambda e,ident=g["id"]:self.open_person(ident))
+
+    def card_click(self,ident,event=None):
+        ctrl=bool(event and (event.state & 0x0004))
+        if ctrl:
+            if ident in self.selected_ids:self.selected_ids.remove(ident)
+            else:self.selected_ids.add(ident)
+        else:
+            self.selected_ids={ident}
+            g=next((x for x in self.filtered_groups if x["id"]==ident),None)
+            if g:self.show_person(g)
+        self.render_gallery()
+
+    def open_person(self,ident):
+        g=next((x for x in self.groups if x["id"]==ident),None)
+        if g:self.show_person(g)
+
+    def show_person(self,g):
+        self.photos=service.person_images(g["id"]); self.photo_index=0
+        win=tk.Toplevel(self); win.title(f"{g['name']} • Face Sorter"); win.geometry("1100x760"); win.configure(bg=BG)
+        tk.Label(win,text=g["name"],bg=BG,fg=TEXT,font=("Segoe UI",22,"bold")).pack(anchor="w",padx=24,pady=(20,0))
+        tk.Label(win,text=f"{len(self.photos):,} photos • double-click a photo to open original",bg=BG,fg=MUTED,font=("Segoe UI",9)).pack(anchor="w",padx=24,pady=(2,12))
+        host=tk.Frame(win,bg=BG); host.pack(fill="both",expand=True,padx=20,pady=8)
+        canvas=tk.Canvas(host,bg=BG,highlightthickness=0); sb=ttk.Scrollbar(host,orient="vertical",command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set); canvas.pack(side="left",fill="both",expand=True); sb.pack(side="right",fill="y")
+        grid=tk.Frame(canvas,bg=BG); canvas.create_window((0,0),window=grid,anchor="nw")
+        grid.bind("<Configure>",lambda e:canvas.configure(scrollregion=canvas.bbox("all")))
+        cols=5
+        for i,path in enumerate(self.photos):
+            th=self._thumbnail(path,180)
+            if not th:continue
+            lab=tk.Label(grid,image=th,bg=CARD,cursor="hand2"); lab.image=th; lab.grid(row=i//cols,column=i%cols,padx=5,pady=5)
+            lab.bind("<Double-Button-1>",lambda e,p=path:os.startfile(p))
+        self.button(win,"Close",win.destroy).pack(pady=(0,18))
+
+    def _bottom_bar(self,main):
+        bar=tk.Frame(main,bg=BG); bar.pack(fill="x",padx=30,pady=(10,18))
+        self.selection_label=tk.Label(bar,text="0 selected",bg=BG,fg=MUTED,font=("Segoe UI",9)); self.selection_label.pack(side="left")
+        self.button(bar,"Reset library",self.reset).pack(side="left",padx=(16,0))
+        self.button(bar,"Consolidate people",self.consolidate_existing).pack(side="left",padx=6)
+        self.button(bar,"Merge selected",self.merge_selected).pack(side="left")
         self.button(bar,"Check for updates",self.check_updates).pack(side="left",padx=6)
-        self.button(bar,"Export no-face photos",self.export).pack(side="right")
-        self.button(bar,"Export selected",self.export_selected).pack(side="right",padx=6)
-        self.button(bar,"Export all people",self.export_all,True).pack(side="right")
+        self.button(bar,"Export selected",self.export_selected).pack(side="right")
+        self.button(bar,"Export all people",self.export_all,True).pack(side="right",padx=6)
+        self.button(bar,"Export unknown",self.export_unknown).pack(side="right",padx=6)
 
     def show_settings(self):
-        messagebox.showinfo("Settings","Face Sorter runs fully locally.\\n\\nGPU: CUDA preferred, DirectML supported.\\nMatching and export thresholds are kept conservative to reduce accidental merges.")
+        messagebox.showinfo("Settings","Face Sorter runs locally.\\n\\nGPU modes use CUDA/DirectML when available.\\nFace grouping uses conservative similarity matching and a consolidation pass.\\nOriginal photos are never modified by scanning or export.")
 
     def choose(self):
-        folder=filedialog.askdirectory(title="Choose your photo folder")
+        folder=filedialog.askdirectory(title="Choose your photo library")
         if folder:self.folder.set(folder)
 
     def start(self):
-        path=Path(self.folder.get().strip())
-        if not path.is_dir():return messagebox.showerror("Face Sorter","Choose a valid photo folder.")
-        if service.STATE["state"]=="scanning":return
-        mode_map={"Auto (GPU preferred)":"auto","GPU only":"gpu","CPU only":"cpu","CPU + GPU":"both"}
-        mode=mode_map[self.mode_box.get()]
+        path=Path(self.folder.get().strip().strip('"'))
+        if not path.is_dir():return messagebox.showerror("Choose a folder","Please select a valid photo folder.")
+        if service.STATE["state"]=="scanning":return messagebox.showinfo("Scan running","A scan is already running.")
+        mode={"Auto (GPU preferred)":"auto","GPU only":"gpu","CPU only":"cpu","CPU + GPU":"both"}[self.mode_box.get()]
         if mode in {"gpu","both"}:
             available=service.providers()
             if "DmlExecutionProvider" not in available and "CUDAExecutionProvider" not in available:
@@ -143,98 +251,64 @@ class FaceSorter(tk.Tk):
     def pause_scan(self):
         try:service.pause_scan()
         except Exception as e:messagebox.showwarning("Scan",str(e))
-    def resume_scan(self):
-        try:service.resume_scan()
-        except Exception as e:messagebox.showwarning("Scan",str(e))
     def stop_scan(self):
         if messagebox.askyesno("Stop scan","Stop the current scan? Completed results will be kept."):
             try:service.cancel_scan()
             except Exception as e:messagebox.showwarning("Scan",str(e))
 
     def refresh(self):
-        state=service.status(); total=state["total"]; processed=state["processed"]; speed=state.get("speed") or 0
-        self.progress["value"]=(processed/total*100) if total else 0
-        people=len(service.people())
-        self.stat_people.set(f"{people:,}"); self.stat_photos.set(f"{state.get('faces',0):,}"); self.stat_speed.set(f"{speed:.1f}/s" if speed else "—"); self.stat_state.set(state["state"].upper())
-        eta=state.get("eta_seconds"); extra=f"{processed:,} / {total:,}" if total else ""
-        if speed:extra+=f"  •  {speed:.1f} photos/s"
-        if eta is not None and state["state"]=="scanning":extra+=f"  •  ETA {int(eta//60)}m"
-        self.status.set(state["message"]+(f"   {extra}" if extra else ""))
-        if state.get("provider"):self.engine_label.config(text=f"{state['provider']}  •  {state.get('workers',0)} worker(s)")
-        if state.get("state")=="scanning" and state.get("last_file"):self._show_path(state["last_file"],"Scanning")
-        groups=service.people(); signature=[(g["id"],g["name"],g["photos"]) for g in groups]
-        if signature!=self.group_signature:
-            current=self.groups[self.people.curselection()[0]]["id"] if self.people.curselection() and self.people.curselection()[0]<len(self.groups) else None
-            self.groups=groups; self.group_signature=signature; self.render_people(current)
+        try:
+            state=service.status(); total=state.get("total",0); processed=state.get("processed",0); speed=state.get("speed") or 0
+            self.progress["value"]=(processed/total*100) if total else 0
+            groups=service.people(); self.groups=groups
+            self.stat_people.set(f"{len(groups):,}"); self.stat_photos.set(f"{state.get('faces',0):,}")
+            self.stat_speed.set(f"{speed:.1f}/s" if speed else "—"); self.stat_state.set(state.get("state","ready").upper())
+            extra=f"{processed:,} / {total:,}" if total else ""
+            if speed:extra+=f"  •  {speed:.1f} photos/s"
+            eta=state.get("eta_seconds")
+            if eta is not None and state.get("state")=="scanning":extra+=f"  •  ETA {int(eta//60)}m"
+            self.status.set(state.get("message","Ready.")+(f"   {extra}" if extra else ""))
+            if state.get("provider"):self.engine_label.config(text=f"{state['provider']}  •  {state.get('workers',0)} worker(s)")
+            signature=[(g["id"],g["name"],g["photos"]) for g in groups]
+            if signature!=self.group_signature:
+                self.group_signature=signature
+                self.render_gallery()
+            self.selection_label.config(text=f"{len(self.selected_ids)} selected")
+        except Exception as e:
+            self.status.set(f"UI refresh error: {e}")
         self.after(900,self.refresh)
 
-    def render_people(self,current=None):
-        query=self.search.get().strip().lower(); self.filtered_groups=[g for g in self.groups if not query or query in g["name"].lower()]
-        self.people.delete(0,tk.END)
-        for g in self.filtered_groups:
-            self.people.insert(tk.END,f"  {g['name']}                                      {g['photos']:,}")
-        self.people_count.config(text=f"{len(self.filtered_groups):,} groups")
-        if current:
-            for i,g in enumerate(self.filtered_groups):
-                if g["id"]==current:self.people.selection_set(i); self.people.see(i); break
-
-    def select_person(self,_=None):
-        selected=self.people.curselection()
-        if not selected:return
-        self.photos=service.person_images(self.filtered_groups[selected[0]]["id"]); self.photo_index=0; self.show_photo()
-
-    def _show_path(self,path,prefix):
-        try:
-            image=Image.open(path); image.thumbnail((430,430)); self.preview_image=ImageTk.PhotoImage(image); self.preview.config(image=self.preview_image,text="")
-            self.photo_text.config(text=f"{prefix}  •  {Path(path).name}")
-        except (OSError,UnidentifiedImageError):pass
-
-    def show_photo(self):
-        if not self.photos:return
-        path=self.photos[self.photo_index]; self._show_path(path,"Photo")
-        self.photo_text.config(text=f"Photo {self.photo_index+1} of {len(self.photos)}  •  {Path(path).name}")
-
-    def move_photo(self,amount):
-        if self.photos:self.photo_index=(self.photo_index+amount)%len(self.photos); self.show_photo()
-    def open_photo(self):
-        if self.photos:os.startfile(self.photos[self.photo_index])
-
     def rename(self):
-        selected=self.people.curselection()
-        if not selected:return messagebox.showinfo("Face Sorter","Select a person first.")
-        g=self.filtered_groups[selected[0]]; name=simpledialog.askstring("Rename person","Person name:",initialvalue=g["name"])
+        if len(self.selected_ids)!=1:return messagebox.showinfo("Rename","Select one person first.")
+        ident=next(iter(self.selected_ids)); g=next((x for x in self.groups if x["id"]==ident),None)
+        if not g:return
+        name=simpledialog.askstring("Rename person","Person name:",initialvalue=g["name"])
         if name:
-            try:service.rename(g["id"],{"name":name}); self.group_signature=[]
+            try:service.rename(ident,{"name":name}); self.group_signature=[]
             except Exception as e:messagebox.showerror("Rename",str(e))
 
     def merge_selected(self):
-        selected=self.people.curselection()
-        if len(selected)<2:return messagebox.showinfo("Merge people","Ctrl-click or Shift-click two or more groups.")
-        ids=[self.filtered_groups[i]["id"] for i in selected]
-        if not messagebox.askyesno("Merge people",f"Merge {len(ids)} selected groups into one person?"):return
-        try:service.merge_people(ids); self.group_signature=[]
+        if len(self.selected_ids)<2:return messagebox.showinfo("Merge people","Ctrl-click two or more people, then choose Merge selected.")
+        if not messagebox.askyesno("Merge people",f"Merge {len(self.selected_ids)} selected groups into one person?\\n\\nTheir photos will be combined."):return
+        try:
+            service.merge_people(list(self.selected_ids)); self.selected_ids.clear(); self.group_signature=[]
         except ValueError as e:messagebox.showerror("Merge",str(e))
 
     def consolidate_existing(self):
         if service.STATE["state"]=="scanning":return messagebox.showinfo("Consolidate","Wait for the scan to finish.")
-        if not messagebox.askyesno("Consolidate people","Find likely duplicate groups and combine them?"):return
+        if not messagebox.askyesno("Consolidate people","Find likely duplicate groups and combine them?\\n\\nPhotos will not be changed."):return
         try:
-            n=service.consolidate_existing(); self.group_signature=[]; messagebox.showinfo("Consolidated",f"Combined {n} duplicate group(s).")
+            n=service.consolidate_existing(); self.selected_ids.clear(); self.group_signature=[]; messagebox.showinfo("Consolidated",f"Combined {n} duplicate group(s).")
         except ValueError as e:messagebox.showerror("Consolidate",str(e))
 
-    def export(self):
-        folder=filedialog.askdirectory(title="Choose output folder")
-        if folder:
-            r=service.export(service.ExportRequest(output_folder=folder)); messagebox.showinfo("Export complete",f"Copied {r['copied']:,} photo(s).\\n\\n{r['folder']}")
-
     def export_selected(self):
-        selected=self.people.curselection()
-        if not selected:return messagebox.showinfo("Export","Select a person first.")
+        if len(self.selected_ids)!=1:return messagebox.showinfo("Export","Select one person.")
         folder=filedialog.askdirectory(title="Choose output folder")
         if folder:
             try:
-                r=service.export_person(self.filtered_groups[selected[0]]["id"],folder); messagebox.showinfo("Export complete",f"Copied {r['copied']:,} photo(s).\\n\\n{r['folder']}")
-            except ValueError as e:messagebox.showerror("Export",str(e))
+                r=service.export_person(next(iter(self.selected_ids)),folder)
+                messagebox.showinfo("Export complete",f"Copied {r['copied']:,} photo(s).\\n\\n{r['folder']}")
+            except Exception as e:messagebox.showerror("Export",str(e))
 
     def export_all(self):
         folder=filedialog.askdirectory(title="Choose output folder")
@@ -243,11 +317,19 @@ class FaceSorter(tk.Tk):
                 r=service.export_all_people(folder); messagebox.showinfo("Export complete",f"Copied {r['copied']:,} photo(s) into {r['groups']:,} person folder(s).")
             except Exception as e:messagebox.showerror("Export",str(e))
 
+    def export_unknown(self):
+        folder=filedialog.askdirectory(title="Choose output folder")
+        if folder:
+            try:
+                r=service.export(service.ExportRequest(output_folder=folder)); messagebox.showinfo("Export complete",f"Copied {r['copied']:,} photo(s) to:\\n{r['folder']}")
+            except Exception as e:messagebox.showerror("Export",str(e))
+
     def check_updates(self):
         def worker():
             try:
                 result=updater.check()
-                if not result.get("update"):self.after(0,lambda:messagebox.showinfo("Updates",f"You are up to date (v{result.get('current')})."));return
+                if not result.get("update"):
+                    self.after(0,lambda:messagebox.showinfo("Updates",f"You are up to date (v{result.get('current')}).")); return
                 def ask():
                     if messagebox.askyesno("Update available",f"Version {result['remote']} is available.\\n\\nOnly changed files will be downloaded. Install now?"):
                         try:updater.apply(result); self.destroy(); updater.restart()
@@ -258,7 +340,9 @@ class FaceSorter(tk.Tk):
 
     def reset(self):
         if messagebox.askyesno("Reset library","Remove the local index and person groups? Original photos will NOT be deleted."):
-            try:service.reset_library()
+            try:
+                service.reset_library(); self.selected_ids.clear(); self.group_signature=[]
             except ValueError as e:messagebox.showwarning("Reset",str(e))
 
-if __name__=="__main__":FaceSorter().mainloop()
+if __name__=="__main__":
+    FaceSorter().mainloop()
