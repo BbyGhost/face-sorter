@@ -1,6 +1,6 @@
 {
-  "version": "3.0.1",
-  "notes": "Fix UI freezes while opening large person galleries and run consolidation in the background. Adds safe consolidation state tracking.",
+  "version": "3.1.0",
+  "notes": "Major responsiveness release: no main-thread thumbnail I/O, batched gallery rendering, background merge/consolidation, no automatic global consolidation after scan, and hardened updater.",
   "files": [
     {
       "path": "desktop.py",
@@ -13,6 +13,10 @@
     {
       "path": "updater.py",
       "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/updater.py"
+    },
+    {
+      "path": "version.json",
+      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/version.json"
     }
   ]
 }
