@@ -1,6 +1,6 @@
 {
-  "version": "3.1.1",
-  "notes": "Fix blank person photo previews and progressively render large person galleries without freezing the UI.",
+  "version": "3.2.0",
+  "notes": "Persistent identity memory across incremental scans. Each person keeps multiple face prototypes; new batches match against learned appearances. Merges preserve that memory.",
   "files": [
     {
       "path": "desktop.py",
