@@ -313,6 +313,14 @@ def consolidate_people(threshold=0.62):
         DB.commit()
     return merged
 
+def consolidate_existing():
+    with LOCK:
+        if STATE['state']=='scanning': raise ValueError('Wait for the current scan to finish.')
+        STATE['message']='Consolidating same-person groups…'
+    merged=consolidate_people(0.62)
+    with LOCK: STATE['message']=f'Consolidated {merged} duplicate person group(s).'
+    return merged
+
 def merge_people(ids):
     ids=list(dict.fromkeys(int(x) for x in ids))
     if len(ids)<2: raise ValueError('Select at least two people to merge.')
@@ -400,6 +408,11 @@ def cancel_scan():
         if STATE['state']!='scanning': raise HTTPException(409,'No scan is running.')
         STATE['cancel_requested']=True; STATE['pause_requested']=False; STATE['message']='Stopping scan…'
     return {'ok':True}
+@app.post('/api/people/consolidate')
+def consolidate_existing_api():
+    try:return {'ok':True,'merged':consolidate_existing()}
+    except ValueError as error:raise HTTPException(400,str(error))
+
 @app.post('/api/people/merge')
 def merge_selected(body:dict):
     try:return {'ok':True,'target':merge_people(body.get('ids',[]))}
