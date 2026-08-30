@@ -1,9 +1,14 @@
 {
-  "version": "1.1.0",
-  "notes": "Selectable CPU, GPU, or CPU + GPU scanning",
+  "version": "1.2.0",
+  "notes": "Performance update: dynamic CPU/GPU work queue and live person counts",
   "files": [
-    {"path":"desktop.py","url":"https://raw.githubusercontent.com/BbyGhost/face-sorter/main/desktop.py"},
-    {"path":"backend/service.py","url":"https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/service.py"},
-    {"path":"updater.py","url":"https://raw.githubusercontent.com/BbyGhost/face-sorter/main/updater.py"}
+    {
+      "path": "backend/service.py",
+      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/service.py"
+    },
+    {
+      "path": "updater.py",
+      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/updater.py"
+    }
   ]
 }
