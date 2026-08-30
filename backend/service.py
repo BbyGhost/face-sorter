@@ -259,6 +259,19 @@ def people():
 def person_images(person_id:int):
     with DB_LOCK:return [r[0] for r in DB.execute('SELECT image_path FROM faces WHERE person_id=? ORDER BY image_path',(person_id,)).fetchall()]
 
+def pause_scan():
+    with LOCK:
+        if STATE['state']!='scanning': raise ValueError('No scan is running.')
+        STATE['pause_requested']=True; STATE['message']='Scan paused.'
+def resume_scan():
+    with LOCK:
+        if STATE['state']!='scanning': raise ValueError('No scan is running.')
+        STATE['pause_requested']=False; STATE['message']='Resuming scan…'
+def cancel_scan():
+    with LOCK:
+        if STATE['state']!='scanning': raise ValueError('No scan is running.')
+        STATE['cancel_requested']=True; STATE['pause_requested']=False; STATE['message']='Stopping scan…'
+
 def consolidate_people(threshold=0.62):
     with DB_LOCK:
         rows=DB.execute('SELECT id,name,embedding,photos FROM people WHERE embedding IS NOT NULL ORDER BY id').fetchall()
