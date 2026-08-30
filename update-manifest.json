@@ -1,14 +1,10 @@
 {
-  "version": "1.7.0",
-  "notes": "Fix missing CUDA DLLs by preloading NVIDIA Python runtime libraries",
+  "version": "1.8.0",
+  "notes": "Major CUDA scan speedup: load only detection+recognition models and use two GPU workers",
   "files": [
     {
       "path": "backend/service.py",
       "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/service.py"
-    },
-    {
-      "path": "setup-nvidia-gpu.ps1",
-      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/setup-nvidia-gpu.ps1"
     },
     {
       "path": "updater.py",
