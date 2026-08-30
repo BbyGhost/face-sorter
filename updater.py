@@ -1,46 +1,56 @@
-import json, shutil, subprocess, sys, tempfile, urllib.request
+import hashlib, json, os, shutil, subprocess, sys, tempfile, urllib.request
 from pathlib import Path
 
-APP_VERSION="3.0.1"
+APP_VERSION="3.1.0"
 UPDATE_MANIFEST_URL="https://raw.githubusercontent.com/BbyGhost/face-sorter/main/update-manifest.json"
 APP_DIR=Path(__file__).resolve().parent
+BACKUP_DIR=APP_DIR/".update-backup"
 
-def download_json(url):
-    with urllib.request.urlopen(url,timeout=15) as r:return json.loads(r.read().decode("utf-8"))
+def download_bytes(url,timeout=30):
+    req=urllib.request.Request(url,headers={"Cache-Control":"no-cache","User-Agent":"FaceSorter-Updater"})
+    with urllib.request.urlopen(req,timeout=timeout) as r:return r.read()
 
 def check():
-    manifest=download_json(UPDATE_MANIFEST_URL)
-    remote=str(manifest.get("version",APP_VERSION))
+    manifest=download_bytes(UPDATE_MANIFEST_URL,15)
+    data=json.loads(manifest.decode("utf-8"))
+    remote=str(data.get("version",APP_VERSION))
+    if remote==APP_VERSION:return {"update":False,"current":APP_VERSION,"remote":remote,"changed":[],"manifest":data}
     changed=[]
-    if remote!=APP_VERSION:
-        for item in manifest.get("files",[]):
-            local=APP_DIR/Path(item["path"])
-            changed.append(item) if not local.exists() else None
-        if not changed:
-            changed=list(manifest.get("files",[]))
-    return {"update":remote!=APP_VERSION and bool(changed),"current":APP_VERSION,"remote":remote,"changed":changed,"manifest":manifest}
+    for item in data.get("files",[]):
+        target=APP_DIR/Path(item["path"])
+        if not target.exists(): changed.append(item); continue
+        expected=item.get("sha256")
+        if expected:
+            h=hashlib.sha256(target.read_bytes()).hexdigest()
+            if h.lower()!=str(expected).lower(): changed.append(item)
+        else:
+            changed.append(item)
+    return {"update":bool(changed),"current":APP_VERSION,"remote":remote,"changed":changed,"manifest":data}
 
 def apply(result):
     changed=result.get("changed",[])
     if not changed:return False
-    backup=APP_DIR/".update-backup"; backup.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory() as td:
+    BACKUP_DIR.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="facesorter-update-") as td:
+        downloaded=[]
         for item in changed:
-            rel=Path(item["path"]); target=APP_DIR/rel; target.parent.mkdir(parents=True,exist_ok=True)
-            temp=Path(td)/rel; temp.parent.mkdir(parents=True,exist_ok=True)
-            with urllib.request.urlopen(item["url"],timeout=60) as r,temp.open("wb") as f: shutil.copyfileobj(r,f)
-            if item.get("sha256"):
-                import hashlib
-                h=hashlib.sha256()
-                with temp.open("rb") as f:
-                    for chunk in iter(lambda:f.read(1024*1024),b""):h.update(chunk)
-                if h.hexdigest()!=item["sha256"]:raise RuntimeError(f"Checksum verification failed: {rel}")
+            rel=Path(item["path"]); temp=Path(td)/rel; temp.parent.mkdir(parents=True,exist_ok=True)
+            data=download_bytes(item["url"],60)
+            expected=item.get("sha256")
+            if expected and hashlib.sha256(data).hexdigest().lower()!=str(expected).lower():
+                raise RuntimeError(f"Checksum verification failed: {rel}")
+            temp.write_bytes(data); downloaded.append((item,temp))
+        for item,temp in downloaded:
+            rel=Path(item["path"]); target=APP_DIR/rel
             if target.exists():
-                b=backup/rel; b.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(target,b)
-            shutil.copy2(temp,target)
+                backup=BACKUP_DIR/rel; backup.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(target,backup)
+            target.parent.mkdir(parents=True,exist_ok=True)
+            os.replace(str(temp),str(target))
     return True
 
 def restart():
-    subprocess.Popen([sys.executable,str(APP_DIR/"desktop.py")],cwd=str(APP_DIR),creationflags=getattr(subprocess,"CREATE_NEW_PROCESS_GROUP",0))
+    desktop=APP_DIR/"desktop.py"
+    subprocess.Popen([sys.executable,str(desktop)],cwd=str(APP_DIR),creationflags=getattr(subprocess,"CREATE_NEW_PROCESS_GROUP",0),close_fds=True)
 
-if __name__=="__main__": print(json.dumps(check(),indent=2))
+if __name__=="__main__":
+    print(json.dumps(check(),indent=2))
