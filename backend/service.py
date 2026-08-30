@@ -256,6 +256,11 @@ def people():
             ORDER BY photos DESC,p.name
         ''').fetchall()
     return [{'id':x[0],'name':x[1],'photos':x[2]} for x in rows]
+def person_thumbnail(person_id:int):
+    with DB_LOCK:
+        row=DB.execute('SELECT image_path FROM faces WHERE person_id=? ORDER BY image_path LIMIT 1',(person_id,)).fetchone()
+    return row[0] if row else None
+
 def person_images(person_id:int):
     with DB_LOCK:return [r[0] for r in DB.execute('SELECT image_path FROM faces WHERE person_id=? ORDER BY image_path',(person_id,)).fetchall()]
 
