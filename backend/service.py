@@ -23,7 +23,7 @@ DB.execute('CREATE TABLE IF NOT EXISTS faces(image_path TEXT,person_id INTEGER,P
 DB.execute('CREATE TABLE IF NOT EXISTS face_processed(image_path TEXT PRIMARY KEY)')
 DB.execute('CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT)'); DB.commit()
 LOCK=threading.Lock(); DB_LOCK=threading.RLock(); PEOPLE_LOCK=threading.RLock()
-STATE={'state':'ready','message':'Choose a folder to begin.','total':0,'processed':0,'new':0,'unchanged':0,'failed':0,'faces':0,'speed':0.0,'eta_seconds':None,'provider':'','workers':0,'mode':'auto'}
+STATE={'state':'ready','message':'Choose a folder to begin.','total':0,'processed':0,'new':0,'unchanged':0,'failed':0,'faces':0,'speed':0.0,'eta_seconds':None,'provider':'','workers':0,'mode':'auto','last_error':'','last_file':'','last_faces':0}
 EXT={'.jpg','.jpeg','.png','.webp','.bmp','.tif','.tiff'}
 MODEL_VERSION='arcface-buffalo-l-gpu-fix-v3'
 FACE_APPS={}; FACE_LOCK=threading.RLock()
