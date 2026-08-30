@@ -1,6 +1,6 @@
 """Local-first face organizer engine with selectable CPU/GPU scanning."""
 from __future__ import annotations
-import hashlib, shutil, sqlite3, threading, time, os
+import hashlib, shutil, sqlite3, threading, time, os, queue
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,7 +22,7 @@ DB.execute('CREATE TABLE IF NOT EXISTS people(id INTEGER PRIMARY KEY,name TEXT U
 DB.execute('CREATE TABLE IF NOT EXISTS faces(image_path TEXT,person_id INTEGER,PRIMARY KEY(image_path,person_id))')
 DB.execute('CREATE TABLE IF NOT EXISTS face_processed(image_path TEXT PRIMARY KEY)')
 DB.execute('CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT)'); DB.commit()
-LOCK=threading.Lock(); DB_LOCK=threading.RLock()
+LOCK=threading.Lock(); DB_LOCK=threading.RLock(); PEOPLE_LOCK=threading.RLock()
 STATE={'state':'ready','message':'Choose a folder to begin.','total':0,'processed':0,'new':0,'unchanged':0,'failed':0,'faces':0,'speed':0.0,'eta_seconds':None,'provider':'','workers':0,'mode':'auto'}
 EXT={'.jpg','.jpeg','.png','.webp','.bmp','.tif','.tiff'}
 MODEL_VERSION='arcface-buffalo-l-v2-cpu-gpu-modes-v1'
@@ -129,38 +129,52 @@ def scan(folder,mode='auto'):
         return
     files=[p for p in folder.rglob('*') if p.is_file() and p.suffix.lower() in EXT]
     with DB_LOCK: existing={r[0]:r[1] for r in DB.execute('SELECT path,modified_ns FROM images').fetchall()}
-    people=load_people(); workers=2 if len(engines)>1 or engines==['gpu'] else max(2,min(6,(os.cpu_count() or 4)//2))
+    people=load_people()
+    cpu_workers=max(2,min(4,(os.cpu_count() or 4)//2))
+    # DirectML does not support concurrent Run calls on the same session, so keep one GPU worker.
+    # CPU inference uses several workers. Both-mode shares one queue so the faster engine gets more work.
+    if mode=='cpu': worker_plan=['cpu']*cpu_workers
+    elif mode=='gpu': worker_plan=['gpu']
+    elif mode=='both': worker_plan=['gpu']+['cpu']*min(2,cpu_workers)
+    else: worker_plan=['gpu'] if engines==['gpu'] else ['cpu']*cpu_workers
     label=' + '.join(engine_label(e) for e in engines)
-    with LOCK: STATE.update(total=len(files),provider=label,workers=workers,message=f'Scanning with {label} ({workers} workers)…')
-    # Split work by engine so CPU+GPU can genuinely run concurrently.
-    buckets={e:[] for e in engines}
-    for i,p in enumerate(files): buckets[engines[i%len(engines)]].append(p)
-    completed=0; start=time.perf_counter(); db_lock=threading.Lock()
-    def process(e,work):
+    with LOCK: STATE.update(total=len(files),provider=label,workers=len(worker_plan),message=f'Scanning with {label} ({len(worker_plan)} workers, dynamic queue)…')
+    work_queue=queue.Queue()
+    for p in files: work_queue.put(p)
+    completed=0; start=time.perf_counter()
+    def process(e):
         nonlocal completed
-        for file in work:
+        while True:
+            try: file=work_queue.get_nowait()
+            except queue.Empty: return
             try:
                 stat=file.stat(); key=str(file)
                 old=existing.get(key)
                 if old is not None and old==stat.st_mtime_ns:
-                    with LOCK: completed+=1; STATE['processed']=completed; STATE['unchanged']+=1
+                    with LOCK:
+                        completed+=1; STATE['processed']=completed; STATE['unchanged']+=1
                     continue
                 vectors=descriptors(file,e)
-                with db_lock:
-                    with DB_LOCK: DB.execute('DELETE FROM faces WHERE image_path=?',(key,))
-                    for v in vectors:
-                        ident=match(v,people)
-                        with DB_LOCK: DB.execute('INSERT OR REPLACE INTO faces(image_path,person_id) VALUES(?,?)',(key,ident))
-                    with DB_LOCK:
-                        DB.execute('INSERT OR REPLACE INTO face_processed(image_path) VALUES(?)',(key,))
-                        DB.execute('INSERT OR REPLACE INTO images(path,modified_ns,digest,scanned_at) VALUES(?,?,?,?)',(key,stat.st_mtime_ns,'',datetime.now(timezone.utc).isoformat()))
-                        if completed%32==0: DB.commit()
-                with LOCK: completed+=1; STATE['processed']=completed; STATE['new']+=1; STATE['faces']+=len(vectors)
-                elapsed=max(time.perf_counter()-start,.001); speed=completed/elapsed
-                with LOCK: STATE['speed']=speed; STATE['eta_seconds']=max(len(files)-completed,0)/speed
+                ids=[]
+                with PEOPLE_LOCK:
+                    for v in vectors: ids.append(match(v,people))
+                with DB_LOCK:
+                    DB.execute('DELETE FROM faces WHERE image_path=?',(key,))
+                    for ident in ids:
+                        DB.execute('INSERT OR REPLACE INTO faces(image_path,person_id) VALUES(?,?)',(key,ident))
+                    DB.execute('INSERT OR REPLACE INTO face_processed(image_path) VALUES(?)',(key,))
+                    DB.execute('INSERT OR REPLACE INTO images(path,modified_ns,digest,scanned_at) VALUES(?,?,?,?)',(key,stat.st_mtime_ns,'',datetime.now(timezone.utc).isoformat()))
+                    if completed%32==0: DB.commit()
+                with LOCK:
+                    completed+=1; STATE['processed']=completed; STATE['new']+=1; STATE['faces']+=len(vectors)
+                    elapsed=max(time.perf_counter()-start,.001); speed=completed/elapsed
+                    STATE['speed']=speed; STATE['eta_seconds']=max(len(files)-completed,0)/speed
             except Exception:
-                with LOCK: completed+=1; STATE['processed']=completed; STATE['failed']+=1
-    threads=[threading.Thread(target=process,args=(e,buckets[e]),daemon=True) for e in engines]
+                with LOCK:
+                    completed+=1; STATE['processed']=completed; STATE['failed']+=1
+            finally:
+                work_queue.task_done()
+    threads=[threading.Thread(target=process,args=(engine,),daemon=True) for engine in worker_plan]
     for t in threads:t.start()
     for t in threads:t.join()
     persist_people(people)
@@ -181,7 +195,13 @@ def start(request:ScanRequest):
     threading.Thread(target=scan,args=(folder.resolve(),request.mode),daemon=True).start(); return {'ok':True,'mode':normalize_mode(request.mode)}
 @app.get('/api/people')
 def people():
-    with DB_LOCK: rows=DB.execute('SELECT id,name,photos FROM people ORDER BY photos DESC,name').fetchall()
+    with DB_LOCK:
+        rows=DB.execute('''
+            SELECT p.id,p.name,COUNT(DISTINCT f.image_path) AS photos
+            FROM people p LEFT JOIN faces f ON f.person_id=p.id
+            GROUP BY p.id,p.name
+            ORDER BY photos DESC,p.name
+        ''').fetchall()
     return [{'id':x[0],'name':x[1],'photos':x[2]} for x in rows]
 def person_images(person_id:int):
     with DB_LOCK:return [r[0] for r in DB.execute('SELECT image_path FROM faces WHERE person_id=? ORDER BY image_path',(person_id,)).fetchall()]
