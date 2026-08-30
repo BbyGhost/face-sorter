@@ -1,6 +1,6 @@
 """Face Sorter — premium Google Photos inspired desktop UI."""
 from __future__ import annotations
-import os, threading, tkinter as tk, updater
+import os, threading, tkinter as tk, updater, queue
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from PIL import Image, ImageTk, ImageOps, UnidentifiedImageError
@@ -22,6 +22,10 @@ class FaceSorter(tk.Tk):
         self.photos=[]; self.photo_index=0; self.preview_image=None
         self.thumb_cache={}; self.card_widgets={}; self.selected_ids=set()
         self.last_folder=""
+        self._gallery_generation=0
+        self._gallery_queue=queue.Queue()
+        self._consolidating=False
+        self._merging=False
         self._build(); self.after(300,self.refresh)
 
     def _styles(self):
@@ -155,16 +159,50 @@ class FaceSorter(tk.Tk):
     def render_gallery(self):
         query=self.search.get().strip().lower()
         self.filtered_groups=[g for g in self.groups if not query or query in g["name"].lower()]
-        for w in self.gallery.winfo_children():w.destroy()
-        self.card_widgets={}; self.people_count.config(text=f"{len(self.filtered_groups):,} people")
+        self._gallery_generation+=1
+        generation=self._gallery_generation
+        for w in self.gallery.winfo_children(): w.destroy()
+        self.card_widgets={}
+        self.people_count.config(text=f"{len(self.filtered_groups):,} people")
         if not self.filtered_groups:
             self._empty_gallery(); return
         width=max(self.canvas.winfo_width(),900); cols=max(3,min(6,width//220))
+        jobs=[]
         for idx,g in enumerate(self.filtered_groups):
             r,c=divmod(idx,cols)
+            jobs.append((g,r,c))
             self._person_card(g,r,c)
-        self.gallery.update_idletasks()
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        threading.Thread(target=self._load_gallery_thumbnails,args=(generation,jobs),daemon=True).start()
+
+    def _load_gallery_thumbnails(self,generation,jobs):
+        from PIL import Image
+        for g,r,c in jobs:
+            if generation!=self._gallery_generation: return
+            try:
+                path=service.person_thumbnail(g["id"])
+                if not path: continue
+                with Image.open(path) as im:
+                    im=ImageOps.fit(im.convert("RGB"),(190,190),method=Image.Resampling.LANCZOS)
+                    self._gallery_queue.put((generation,g["id"],im.copy()))
+            except Exception: continue
+        self.after(1,self._drain_gallery_queue)
+
+    def _drain_gallery_queue(self):
+        processed=0
+        while processed<6:
+            try: generation,ident,im=self._gallery_queue.get_nowait()
+            except queue.Empty: break
+            if generation!=self._gallery_generation: continue
+            card=self.card_widgets.get(ident)
+            if not card or not card.winfo_exists(): continue
+            photo=ImageTk.PhotoImage(im)
+            label=getattr(card,"_image_label",None)
+            if label and label.winfo_exists():
+                label.configure(image=photo,text="")
+                label.image=photo
+            processed+=1
+        if not self._gallery_queue.empty():
+            self.after(20,self._drain_gallery_queue)
 
     def _person_card(self,g,row,col):
         selected=g["id"] in self.selected_ids
@@ -172,8 +210,7 @@ class FaceSorter(tk.Tk):
                       highlightbackground=ACCENT if selected else BORDER,cursor="hand2")
         card.grid(row=row,column=col,sticky="nsew",padx=6,pady=6)
         self.card_widgets[g["id"]]=card
-        thumb_path=service.person_thumbnail(g["id"])
-        thumb=self._thumbnail(thumb_path,190) if thumb_path else None
+        thumb=None
         if thumb:
             image_label=tk.Label(card,image=thumb,bg=CARD); image_label.image=thumb
         else:
