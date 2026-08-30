@@ -283,7 +283,7 @@ class FaceSorter(tk.Tk):
         self.selection_label=tk.Label(bar,text="0 selected",bg=BG,fg=MUTED,font=("Segoe UI",9)); self.selection_label.pack(side="left")
         self.button(bar,"Reset library",self.reset).pack(side="left",padx=(16,0))
         self.button(bar,"Consolidate people",self.consolidate_existing).pack(side="left",padx=6)
-        self.button(bar,"Merge selected",self.merge_selected).pack(side="left")
+        self.merge_btn=self.button(bar,"Merge selected",self.merge_selected); self.merge_btn.pack(side="left")
         self.button(bar,"Check for updates",self.check_updates).pack(side="left",padx=6)
         self.button(bar,"Export selected",self.export_selected).pack(side="right")
         self.button(bar,"Export all people",self.export_all,True).pack(side="right",padx=6)
@@ -349,15 +349,35 @@ class FaceSorter(tk.Tk):
             except Exception as e:messagebox.showerror("Rename",str(e))
 
     def merge_selected(self):
-        if len(self.selected_ids)<2:return messagebox.showinfo("Merge people","Ctrl-click two or more people, then choose Merge selected.")
-        if not messagebox.askyesno("Merge people",f"Merge {len(self.selected_ids)} selected groups into one person?\\n\\nTheir photos will be combined."):return
-        try:
-            service.merge_people(list(self.selected_ids)); self.selected_ids.clear(); self.group_signature=[]
-        except ValueError as e:messagebox.showerror("Merge",str(e))
+        if len(self.selected_ids)<2:
+            return messagebox.showinfo("Merge people","Ctrl-click two or more people, then choose Merge selected.")
+        if self._merging or self._consolidating:
+            return messagebox.showinfo("Busy","Another people operation is already running.")
+        ids=list(self.selected_ids)
+        if not messagebox.askyesno("Merge people",f"Merge {len(ids)} selected groups into one person?\n\nTheir photos will be combined."): return
+        self._merging=True
+        self.status.set("Merging selected people in the background…")
+        def worker():
+            try:
+                target=service.merge_people(ids)
+                def done():
+                    self._merging=False
+                    self.selected_ids.clear()
+                    self.group_signature=[]
+                    self.render_gallery()
+                    self.status.set("People merged successfully.")
+                self.after(0,done)
+            except Exception as e:
+                self._merging=False
+                self.after(0,lambda:messagebox.showerror("Merge failed",str(e)))
+        threading.Thread(target=worker,daemon=True).start()
 
     def consolidate_existing(self):
-        if service.STATE["state"]=="scanning":return messagebox.showinfo("Consolidate","Wait for the scan to finish.")
-        if not messagebox.askyesno("Consolidate people","Find likely duplicate groups and combine them?\\n\\nPhotos will not be changed."):return
+        if service.STATE["state"]=="scanning": return messagebox.showinfo("Consolidate","Wait for the scan to finish.")
+        if self._consolidating or self._merging: return messagebox.showinfo("Busy","Another people operation is already running.")
+        if not messagebox.askyesno("Consolidate people","Find and combine likely duplicate groups?\n\nThis runs in the background. You can continue using the app."): return
+        self._consolidating=True
+        self.status.set("Consolidating people in the background…")
         def worker():
             try:
                 n=service.consolidate_existing()
@@ -366,13 +386,11 @@ class FaceSorter(tk.Tk):
                     self.selected_ids.clear()
                     self.group_signature=[]
                     self.render_gallery()
-                    messagebox.showinfo("Consolidated",f"Combined {n} duplicate group(s).")
+                    self.status.set(f"Consolidation complete — {n} group(s) merged.")
                 self.after(0,done)
             except Exception as e:
                 self._consolidating=False
-                self.after(0,lambda:messagebox.showerror("Consolidate",str(e)))
-        self._consolidating=True
-        self.status.set("Consolidating people in the background…")
+                self.after(0,lambda:messagebox.showerror("Consolidation failed",str(e)))
         threading.Thread(target=worker,daemon=True).start()
 
     def export_selected(self):
