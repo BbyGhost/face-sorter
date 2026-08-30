@@ -1,18 +1,22 @@
 {
-  "version": "1.5.0",
-  "notes": "Show live scanning photo preview and expose scan diagnostics",
+  "version": "1.6.0",
+  "notes": "Fix DirectML reshape failures by preferring NVIDIA CUDA and add one-click CUDA setup",
   "files": [
     {
       "path": "backend/service.py",
       "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/service.py"
     },
     {
-      "path": "desktop.py",
-      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/desktop.py"
+      "path": "backend/requirements.txt",
+      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/requirements.txt"
     },
     {
       "path": "updater.py",
       "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/updater.py"
+    },
+    {
+      "path": "setup-nvidia-gpu.ps1",
+      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/setup-nvidia-gpu.ps1"
     }
   ]
 }
