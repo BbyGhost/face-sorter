@@ -163,9 +163,9 @@ class FaceSorter(tk.Tk):
         query=self.search.get().strip().lower()
         self.filtered_groups=[g for g in self.groups if not query or query in g["name"].lower()]
         self._gallery_generation+=1
-        generation=self._gallery_generation
-        self._gallery_jobs={}
-        self._gallery_images={}
+        self._gallery_jobs.clear()
+        self._gallery_images.clear()
+        self._gallery_items.clear()
         self.canvas.delete("all")
         self.people_count.config(text=f"{len(self.filtered_groups):,} people")
         if not self.filtered_groups:
@@ -174,35 +174,55 @@ class FaceSorter(tk.Tk):
 
     def _render_visible_gallery(self):
         if not self.filtered_groups:return
-        generation=self._gallery_generation
         width=max(self.canvas.winfo_width(),900)
         card_w=170; card_h=235; gap=12
         cols=max(3,min(7,int(width//(card_w+gap))))
         rows=(len(self.filtered_groups)+cols-1)//cols
         total_h=max(1,rows*(card_h+gap)+20)
         self.canvas.configure(scrollregion=(0,0,width,total_h))
-        first=max(0,int(self.canvas.canvasy(0)//(card_h+gap))-1)
-        last=min(len(self.filtered_groups),int((self.canvas.canvasy(self.canvas.winfo_height())+self.canvas.canvasy(0))//(card_h+gap))+2)
-        self.canvas.delete("card")
+        top=self.canvas.canvasy(0); bottom=top+max(self.canvas.winfo_height(),400)
+        first=max(0,int(top//(card_h+gap))-1)
+        last=min(len(self.filtered_groups),int(bottom//(card_h+gap))+2)
+        wanted=set()
+        generation=self._gallery_generation
         for idx in range(first,last):
-            g=self.filtered_groups[idx]; r,c=divmod(idx,cols)
-            x=8+c*(card_w+gap); y=10+r*(card_h+gap)
-            ident=g["id"]; selected=ident in self.selected_ids
-            bg="#251b3a" if selected else CARD
-            self.canvas.create_rectangle(x,y,x+card_w,y+card_h,fill=bg,outline=ACCENT if selected else BORDER,width=1,tags=("card",f"person:{ident}"))
-            self.canvas.create_rectangle(x+6,y+6,x+card_w-6,y+176,fill=PANEL2,outline="",tags=("card",f"person:{ident}"))
-            photo=self._gallery_images.get(ident)
-            if photo:
-                self.canvas.create_image(x+card_w/2,y+91,image=photo,tags=("card",f"person:{ident}"))
+            g=self.filtered_groups[idx]; ident=int(g["id"]); wanted.add(ident)
+            r,c=divmod(idx,cols); x=8+c*(card_w+gap); y=10+r*(card_h+gap)
+            items=self._gallery_items.get(ident)
+            if items:
+                self.canvas.coords(items["bg"],x,y,x+card_w,y+card_h)
+                self.canvas.coords(items["photo_bg"],x+6,y+6,x+card_w-6,y+176)
+                self.canvas.coords(items["thumb"],x+card_w/2,y+91)
+                self.canvas.coords(items["name"],x+10,y+190)
+                self.canvas.coords(items["count"],x+10,y+211)
+                self._update_card_style(ident)
             else:
-                self.canvas.create_text(x+card_w/2,y+91,text="◉",fill=MUTED,font=("Segoe UI",30),tags=("card",f"person:{ident}"))
-            self.canvas.create_text(x+10,y+190,text=g["name"],anchor="w",fill=TEXT,font=("Segoe UI",10,"bold"),
-                                    tags=("card",f"person:{ident}"))
-            self.canvas.create_text(x+10,y+211,text=f"{g['photos']:,} photos",anchor="w",fill=MUTED,font=("Segoe UI",8),
-                                    tags=("card",f"person:{ident}"))
+                tags=("card",f"person:{ident}")
+                selected=ident in self.selected_ids
+                bg=self.canvas.create_rectangle(x,y,x+card_w,y+card_h,fill="#251b3a" if selected else CARD,
+                    outline=ACCENT if selected else BORDER,width=1,tags=tags)
+                photo_bg=self.canvas.create_rectangle(x+6,y+6,x+card_w-6,y+176,fill=PANEL2,outline="",tags=tags)
+                photo=self._gallery_images.get(ident)
+                if photo:
+                    thumb=self.canvas.create_image(x+card_w/2,y+91,image=photo,tags=tags+(f"thumb:{ident}",))
+                else:
+                    thumb=self.canvas.create_text(x+card_w/2,y+91,text="◉",fill=MUTED,font=("Segoe UI",30),tags=tags+(f"thumb:{ident}",))
+                name=self.canvas.create_text(x+10,y+190,text=g["name"],anchor="w",fill=TEXT,font=("Segoe UI",10,"bold"),tags=tags)
+                count=self.canvas.create_text(x+10,y+211,text=f"{g['photos']:,} photos",anchor="w",fill=MUTED,font=("Segoe UI",8),tags=tags)
+                self._gallery_items[ident]={"bg":bg,"photo_bg":photo_bg,"thumb":thumb,"name":name,"count":count}
             if ident not in self._gallery_images and ident not in self._gallery_jobs:
                 self._gallery_jobs[ident]=generation
                 threading.Thread(target=self._load_one_gallery_thumbnail,args=(generation,ident),daemon=True).start()
+        for ident,items in list(self._gallery_items.items()):
+            if ident not in wanted:
+                for item in items.values(): self.canvas.delete(item)
+                self._gallery_items.pop(ident,None)
+
+    def _update_card_style(self,ident):
+        items=self._gallery_items.get(int(ident))
+        if items:
+            selected=int(ident) in self.selected_ids
+            self.canvas.itemconfig(items["bg"],fill="#251b3a" if selected else CARD,outline=ACCENT if selected else BORDER)
 
     def _load_one_gallery_thumbnail(self,generation,ident):
         try:
@@ -224,31 +244,14 @@ class FaceSorter(tk.Tk):
             photo=ImageTk.PhotoImage(im)
             self._gallery_images[ident]=photo
             self._gallery_jobs.pop(ident,None)
-            self._render_visible_gallery()
+            items=self._gallery_items.get(ident)
+            if items:
+                box=self.canvas.bbox(items["photo_bg"])
+                self.canvas.delete(items["thumb"])
+                items["thumb"]=self.canvas.create_image((box[0]+box[2])/2,(box[1]+box[3])/2,
+                    image=photo,tags=("card",f"person:{ident}",f"thumb:{ident}"))
         except Exception:
             self._finish_gallery_job(generation,ident)
-
-    def _gallery_person_id(self,event):
-        item=self.canvas.find_withtag("current")
-        if not item:return None
-        tags=self.canvas.gettags(item[0])
-        for t in tags:
-            if t.startswith("person:"):
-                try:return int(t.split(":",1)[1])
-                except ValueError:return None
-        return None
-
-    def _gallery_click(self,event):
-        ident=self._gallery_person_id(event)
-        if ident is None:return
-        ctrl=bool(event.state & 0x0004)
-        if ctrl:
-            if ident in self.selected_ids:self.selected_ids.remove(ident)
-            else:self.selected_ids.add(ident)
-        else:
-            self.selected_ids={ident}
-        self.selection_label.config(text=f"{len(self.selected_ids)} selected")
-        self._update_card_style(ident)
 
     def _gallery_double_click(self,event):
         ident=self._gallery_person_id(event)
