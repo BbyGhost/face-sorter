@@ -1,10 +1,18 @@
 {
-  "version": "1.8.0",
-  "notes": "Major CUDA scan speedup: load only detection+recognition models and use two GPU workers",
+  "version": "1.9.0",
+  "notes": "Stabilize CUDA cuDNN execution, pin cuDNN 9.7.1, and avoid concurrent GPU session runs",
   "files": [
     {
       "path": "backend/service.py",
       "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/service.py"
+    },
+    {
+      "path": "backend/requirements.txt",
+      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/requirements.txt"
+    },
+    {
+      "path": "setup-nvidia-gpu.ps1",
+      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/setup-nvidia-gpu.ps1"
     },
     {
       "path": "updater.py",
