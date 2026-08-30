@@ -1,0 +1,9 @@
+fastapi>=0.110
+uvicorn>=0.27
+numpy>=1.26
+opencv-python==4.12.0.88
+Pillow>=10.0
+insightface>=0.7.3
+# Uses a Windows GPU through DirectML when one is available; otherwise it falls
+# back to CPU automatically.
+onnxruntime-directml>=1.17

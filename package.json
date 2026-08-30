@@ -1,0 +1,13 @@
+{
+  "name": "face-sorter",
+  "version": "0.1.0",
+  "private": true,
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "build": "vite build",
+    "start": "electron ."
+  },
+  "devDependencies": {"@vitejs/plugin-react": "latest", "concurrently": "latest", "electron": "latest", "vite": "latest", "wait-on": "latest"},
+  "dependencies": {"react": "latest", "react-dom": "latest"}
+}
