@@ -1,6 +1,6 @@
 {
-  "version": "2.1.0",
-  "notes": "Global same-person clustering, manual merge, pause/resume/stop controls, and single GPU worker for stable CUDA throughput",
+  "version": "2.1.1",
+  "notes": "Add one-click consolidation for existing libraries",
   "files": [
     {
       "path": "backend/service.py",
