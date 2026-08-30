@@ -1,6 +1,6 @@
 """Local-first face organizer engine with selectable CPU/GPU scanning."""
 from __future__ import annotations
-import hashlib, shutil, sqlite3, threading, time, os, queue
+import hashlib, shutil, sqlite3, threading, time, os, queue, re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,7 +28,7 @@ DB.execute('CREATE TABLE IF NOT EXISTS faces(image_path TEXT,person_id INTEGER,P
 DB.execute('CREATE TABLE IF NOT EXISTS face_processed(image_path TEXT PRIMARY KEY)')
 DB.execute('CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT)'); DB.commit()
 LOCK=threading.Lock(); DB_LOCK=threading.RLock(); PEOPLE_LOCK=threading.RLock()
-STATE={'state':'ready','message':'Choose a folder to begin.','total':0,'processed':0,'new':0,'unchanged':0,'failed':0,'faces':0,'speed':0.0,'eta_seconds':None,'provider':'','workers':0,'mode':'auto','last_error':'','last_file':'','last_faces':0}
+STATE={'state':'ready','message':'Choose a folder to begin.','total':0,'processed':0,'new':0,'unchanged':0,'failed':0,'faces':0,'speed':0.0,'eta_seconds':None,'provider':'','workers':0,'mode':'auto','last_error':'','last_file':'','last_faces':0,'pause_requested':False,'cancel_requested':False}
 EXT={'.jpg','.jpeg','.png','.webp','.bmp','.tif','.tiff'}
 MODEL_VERSION='arcface-buffalo-l-cuda-stable-v6'
 FACE_APPS={}; FACE_LOCK=threading.RLock()
@@ -153,7 +153,7 @@ def persist_people(people):
 def scan(folder,mode='auto'):
     mode=normalize_mode(mode)
     try:
-        with LOCK: STATE.update(state='scanning',message='Loading face models…',total=0,processed=0,new=0,unchanged=0,failed=0,faces=0,speed=0.0,eta_seconds=None,mode=mode,provider='',workers=0)
+        with LOCK: STATE.update(state='scanning',message='Loading face models…',total=0,processed=0,new=0,unchanged=0,failed=0,faces=0,speed=0.0,eta_seconds=None,mode=mode,provider='',workers=0,pause_requested=False,cancel_requested=False)
         migrate_model_index(); engines=mode_plan(mode)
         for e in engines: prepare_model(e)
         active=[]
@@ -169,7 +169,7 @@ def scan(folder,mode='auto'):
     # CUDA supports concurrent inference calls; use two GPU workers to keep the NVIDIA device fed.
     # CPU inference uses several workers. Both-mode shares one queue so the faster engine gets more work.
     if mode=='cpu': worker_plan=['cpu']*cpu_workers
-    elif mode=='gpu': worker_plan=['gpu']*2
+    elif mode=='gpu': worker_plan=['gpu']
     elif mode=='both': worker_plan=['gpu']+['cpu']*min(2,cpu_workers)
     else: worker_plan=['gpu'] if engines==['gpu'] else ['cpu']*cpu_workers
     label=' + '.join(engine_label(e) for e in engines)
@@ -245,6 +245,65 @@ def people():
     return [{'id':x[0],'name':x[1],'photos':x[2]} for x in rows]
 def person_images(person_id:int):
     with DB_LOCK:return [r[0] for r in DB.execute('SELECT image_path FROM faces WHERE person_id=? ORDER BY image_path',(person_id,)).fetchall()]
+
+def consolidate_people(threshold=0.62):
+    with DB_LOCK:
+        rows=DB.execute('SELECT id,name,embedding,photos FROM people WHERE embedding IS NOT NULL ORDER BY id').fetchall()
+    if len(rows)<2:return 0
+    ids=[int(r[0]) for r in rows]; names=[r[1] for r in rows]; photos=[int(r[3] or 0) for r in rows]
+    vecs=[]
+    for r in rows:
+        v=np.frombuffer(r[2],dtype=np.float32).copy(); v/=np.linalg.norm(v)+1e-8; vecs.append(v)
+    mat=np.stack(vecs); parent=list(range(len(ids)))
+    def find(x):
+        while parent[x]!=x:
+            parent[x]=parent[parent[x]]; x=parent[x]
+        return x
+    def union(a,b):
+        ra,rb=find(a),find(b)
+        if ra!=rb: parent[rb]=ra
+    chunk=512
+    for start_i in range(0,len(ids),chunk):
+        scores=mat[start_i:start_i+chunk] @ mat.T
+        rr,cc=np.where(scores>=threshold)
+        for a,b in zip(rr.tolist(),cc.tolist()):
+            ai=start_i+a
+            if ai<b: union(ai,b)
+    components={}
+    for i in range(len(ids)): components.setdefault(find(i),[]).append(i)
+    merged=0
+    with DB_LOCK:
+        for members in components.values():
+            if len(members)<2: continue
+            target=max(members,key=lambda i: photos[i])
+            custom=[i for i in members if not re.fullmatch(r'Person \d+',names[i] or '')]
+            if custom: target=max(custom,key=lambda i: photos[i])
+            target_id=ids[target]
+            for i in members:
+                if i==target: continue
+                DB.execute('UPDATE faces SET person_id=? WHERE person_id=?',(target_id,ids[i]))
+                DB.execute('DELETE FROM people WHERE id=?',(ids[i],)); merged+=1
+            DB.execute('UPDATE people SET photos=(SELECT COUNT(DISTINCT image_path) FROM faces WHERE person_id=people.id) WHERE id=?',(target_id,))
+        DB.commit()
+    return merged
+
+def merge_people(ids):
+    ids=list(dict.fromkeys(int(x) for x in ids))
+    if len(ids)<2: raise ValueError('Select at least two people to merge.')
+    with DB_LOCK:
+        rows=DB.execute('SELECT id,name,embedding,photos FROM people WHERE id IN (%s)'%(','.join('?'*len(ids))),ids).fetchall()
+    if len(rows)!=len(ids): raise ValueError('One or more selected people no longer exists.')
+    target=max(rows,key=lambda r:int(r[3] or 0)); custom=[r for r in rows if not re.fullmatch(r'Person \d+',r[1] or '')]
+    if custom: target=max(custom,key=lambda r:int(r[3] or 0))
+    target_id=int(target[0])
+    with DB_LOCK:
+        for r in rows:
+            if int(r[0])!=target_id:
+                DB.execute('UPDATE faces SET person_id=? WHERE person_id=?',(target_id,int(r[0])))
+                DB.execute('DELETE FROM people WHERE id=?',(int(r[0]),))
+        DB.execute('UPDATE people SET photos=(SELECT COUNT(DISTINCT image_path) FROM faces WHERE person_id=people.id) WHERE id=?',(target_id,)); DB.commit()
+    return target_id
+
 def export_person(person_id:int,output_folder:str):
     if not output_folder.strip():raise ValueError('Choose an output folder.')
     with DB_LOCK:
