@@ -1,6 +1,6 @@
 {
-  "version": "3.2.1",
-  "notes": "Major People gallery performance fix: virtualized canvas rendering, lazy visible-only thumbnails, and actual thumbnail display.",
+  "version": "3.2.2",
+  "notes": "Fix People gallery virtualization: cards no longer disappear/rebuild while scrolling or selecting; thumbnails update in place and selection remains stable.",
   "files": [
     {
       "path": "desktop.py",
