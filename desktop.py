@@ -135,6 +135,7 @@ class FaceSorter(tk.Tk):
         self._gallery_after=None
         self._gallery_jobs={}
         self._gallery_images={}
+        self._gallery_items={}
         self._gallery_generation=0
         self._empty_gallery()
 
@@ -247,9 +248,7 @@ class FaceSorter(tk.Tk):
         else:
             self.selected_ids={ident}
         self.selection_label.config(text=f"{len(self.selected_ids)} selected")
-        self._render_visible_gallery()
-        if not ctrl:
-            self.open_person(ident)
+        self._update_card_style(ident)
 
     def _gallery_double_click(self,event):
         ident=self._gallery_person_id(event)
