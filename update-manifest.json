@@ -1,6 +1,6 @@
 {
-  "version": "3.1.0",
-  "notes": "Major responsiveness release: no main-thread thumbnail I/O, batched gallery rendering, background merge/consolidation, no automatic global consolidation after scan, and hardened updater.",
+  "version": "3.1.1",
+  "notes": "Fix blank person photo previews and progressively render large person galleries without freezing the UI.",
   "files": [
     {
       "path": "desktop.py",
