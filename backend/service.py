@@ -253,8 +253,43 @@ def export_person(person_id:int,output_folder:str):
     folder=Path(output_folder)/safe_folder_name(row[0]); return {'copied':copy_to_folder(paths,folder),'folder':str(folder)}
 def export_all_people(output_folder:str):
     if not output_folder.strip():raise ValueError('Choose an output folder.')
-    with DB_LOCK: groups=DB.execute('SELECT id,name FROM people').fetchall()
-    total=sum(export_person(i,output_folder)['copied'] for i,_ in groups); return {'copied':total,'groups':len(groups),'folder':str(Path(output_folder))}
+    # Export-time consolidation: several cluster IDs can belong to the same real person.
+    # Group their normalized centroid embeddings before creating folders.
+    MERGE_THRESHOLD=0.62
+    with DB_LOCK:
+        rows=DB.execute('SELECT id,name,embedding,photos FROM people ORDER BY id').fetchall()
+        photo_rows=DB.execute('SELECT person_id,image_path FROM faces ORDER BY person_id,image_path').fetchall()
+    groups=[]
+    for ident,name,raw,photos in rows:
+        if not raw: continue
+        vec=np.frombuffer(raw,dtype=np.float32).copy()
+        vec/=np.linalg.norm(vec)+1e-8
+        groups.append({'ids':[int(ident)],'name':name,'embedding':vec,'photos':int(photos or 0),'paths':[]})
+    by_id={g['ids'][0]:g for g in groups}
+    for ident,path in photo_rows:
+        if int(ident) in by_id: by_id[int(ident)]['paths'].append(path)
+    # Union clusters whose centroids are close enough to be the same person.
+    merged=[]
+    for g in groups:
+        target=None; best=-1.0
+        for m in merged:
+            score=float(np.dot(m['embedding'],g['embedding']))
+            if score>=MERGE_THRESHOLD and score>best:
+                best=score; target=m
+        if target is None:
+            merged.append(g)
+        else:
+            n1=target['photos']; n2=g['photos']; total_n=max(1,n1+n2)
+            target['embedding']=(target['embedding']*n1+g['embedding']*n2)/total_n
+            target['embedding']/=np.linalg.norm(target['embedding'])+1e-8
+            target['photos']=n1+n2
+            target['ids'].extend(g['ids'])
+            target['paths'].extend(g['paths'])
+    out=Path(output_folder); copied=0
+    for index,g in enumerate(merged,1):
+        name=safe_folder_name(g['name'] or f'Person {index}')
+        copied+=copy_to_folder(g['paths'],out/name)
+    return {'copied':copied,'groups':len(merged),'original_groups':len(groups),'folder':str(out),'merge_threshold':MERGE_THRESHOLD}
 def reset_library():
     with LOCK:
         if STATE['state']=='scanning':raise ValueError('Wait for the current scan to finish before resetting.')
