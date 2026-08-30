@@ -24,6 +24,9 @@ class FaceSorter(tk.Tk):
         ttk.Label(scanbar,text="Scan engine").pack(side="left")
         self.mode_box=ttk.Combobox(scanbar,textvariable=self.scan_mode,state="readonly",width=22,values=("Auto (GPU preferred)","GPU only","CPU only","CPU + GPU"))
         self.mode_box.current(0); self.mode_box.pack(side="left",padx=(10,0))
+        self.mode_box.bind("<<ComboboxSelected>>", self.on_mode_change)
+        self.selected_mode_label=tk.StringVar(value="Selected: Auto (GPU preferred)")
+        ttk.Label(scanbar,textvariable=self.selected_mode_label,style="Sub.TLabel").pack(side="left",padx=(12,0))
         ttk.Label(scanbar,text="GPU mode requires DirectML/CUDA.",style="Sub.TLabel").pack(side="left",padx=(12,0))
         ttk.Button(outer,text="Start face scan",command=self.start).pack(anchor="w"); self.progress=ttk.Progressbar(outer,mode="determinate",maximum=100); self.progress.pack(fill="x",pady=(15,6)); ttk.Label(outer,textvariable=self.status,style="Sub.TLabel").pack(anchor="w")
         ttk.Separator(outer).pack(fill="x",pady=18); content=ttk.Frame(outer); content.pack(fill="both",expand=True)
@@ -39,12 +42,27 @@ class FaceSorter(tk.Tk):
     def choose(self):
         folder=filedialog.askdirectory(title="Choose your photo folder")
         if folder:self.folder.set(folder)
+    def on_mode_change(self,_event=None):
+        selected=self.mode_box.get()
+        self.scan_mode.set(selected)
+        self.selected_mode_label.set(f"Selected: {selected}")
+
     def start(self):
         path=Path(self.folder.get().strip())
         if not path.is_dir():return messagebox.showerror("Face Sorter","Choose a valid photo folder.")
         if service.STATE['state']=='scanning':return
         mode_map={'Auto (GPU preferred)':'auto','GPU only':'gpu','CPU only':'cpu','CPU + GPU':'both'}
-        threading.Thread(target=service.scan,args=(path,mode_map.get(self.scan_mode.get(),'auto')),daemon=True).start()
+        selected=self.mode_box.get()
+        mode=mode_map.get(selected)
+        if mode is None:
+            return messagebox.showerror("Face Sorter","Please select a valid scan engine.")
+        if mode in {"gpu","both"}:
+            available=service.providers()
+            if "DmlExecutionProvider" not in available and "CUDAExecutionProvider" not in available:
+                return messagebox.showerror("GPU unavailable",f"{selected} requires a GPU execution provider.\n\nDetected providers:\n{', '.join(available) or 'None'}\n\nInstall onnxruntime-directml in this virtual environment, then restart Face Sorter.")
+        self.scan_mode.set(selected)
+        self.selected_mode_label.set(f"Selected: {selected}")
+        threading.Thread(target=service.scan,args=(path,mode),daemon=True).start()
     def refresh(self):
         state=service.status(); total=state['total']; self.progress['value']=(state['processed']/total*100) if total else 0; speed=state.get('speed') or 0
         eta=state.get('eta_seconds'); extra=f"  {state['processed']:,} / {total:,}"
@@ -52,6 +70,8 @@ class FaceSorter(tk.Tk):
         if eta is not None and state.get('state')=='scanning':
             mins=int(eta//60); extra+=f"  •  ETA {mins}m" if mins else f"  •  ETA {int(eta)}s"
         self.status.set(state['message']+extra if total else state['message'])
+        if state.get('provider'):
+            self.selected_mode_label.set(f"Running: {state['provider']} • Mode: {state.get('mode','auto').upper()}")
         selected=self.people.curselection(); current=self.groups[selected[0]]['id'] if selected and selected[0]<len(self.groups) else None; groups=service.people()
         signature=[(group['id'],group['name'],group['photos']) for group in groups]
         if signature!=self.group_signature:
