@@ -126,176 +126,134 @@ class FaceSorter(tk.Tk):
         self.scrollbar=ttk.Scrollbar(self.gallery_host,orient="vertical",command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
         self.canvas.pack(side="left",fill="both",expand=True); self.scrollbar.pack(side="right",fill="y")
-        self.gallery=tk.Frame(self.canvas,bg=BG)
-        self.gallery_window=self.canvas.create_window((0,0),window=self.gallery,anchor="nw")
-        self.gallery.bind("<Configure>",lambda e:self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<Configure>",self._resize_gallery)
-        self.canvas.bind_all("<MouseWheel>",self._wheel)
+        self.canvas.bind("<MouseWheel>",self._wheel)
+        self.canvas.bind("<Button-1>",self._gallery_click)
+        self.canvas.bind("<Double-Button-1>",self._gallery_double_click)
+        self.canvas.bind("<Configure>",lambda e:self._schedule_gallery_render())
+        self.canvas.bind("<Key>",lambda e:None)
+        self.canvas.bind("<ButtonRelease-1>",lambda e:self._schedule_gallery_render())
+        self._gallery_after=None
+        self._gallery_jobs={}
+        self._gallery_images={}
+        self._gallery_generation=0
         self._empty_gallery()
 
-    def _resize_gallery(self,event):
-        self.canvas.itemconfigure(self.gallery_window,width=event.width)
-
     def _wheel(self,event):
-        if self.canvas.winfo_exists(): self.canvas.yview_scroll(int(-event.delta/120),"units")
+        if self.canvas.winfo_exists():
+            self.canvas.yview_scroll(int(-event.delta/120),"units")
+            self._schedule_gallery_render()
 
     def _empty_gallery(self):
-        for w in self.gallery.winfo_children():w.destroy()
-        box=tk.Frame(self.gallery,bg=PANEL,highlightthickness=1,highlightbackground=BORDER)
-        box.pack(fill="x",padx=2,pady=2)
-        tk.Label(box,text="Your people will appear here",bg=PANEL,fg=TEXT,font=("Segoe UI",15,"bold")).pack(pady=(55,5))
-        tk.Label(box,text="Choose a photo folder and start a scan to build your visual library.",bg=PANEL,fg=MUTED,font=("Segoe UI",10)).pack(pady=(0,55))
+        self.canvas.delete("all")
+        self.canvas.configure(scrollregion=(0,0,max(self.canvas.winfo_width(),900),400))
+        w=max(self.canvas.winfo_width(),900)
+        self.canvas.create_text(w//2,120,text="Your people will appear here",fill=TEXT,
+                                font=("Segoe UI",15,"bold"),tags=("empty",))
+        self.canvas.create_text(w//2,155,text="Choose a photo folder and start a scan to build your visual library.",
+                                fill=MUTED,font=("Segoe UI",10),tags=("empty",))
 
-    def _thumbnail(self,path,size=190):
-        key=(path,size)
-        if key in self.thumb_cache:return self.thumb_cache[key]
-        try:
-            with Image.open(path) as im:
-                im=ImageOps.fit(im.convert("RGB"),(size,size),method=Image.Resampling.LANCZOS)
-                photo=ImageTk.PhotoImage(im)
-            self.thumb_cache[key]=photo; return photo
-        except (OSError,UnidentifiedImageError): return None
+    def _schedule_gallery_render(self):
+        if self._gallery_after:
+            try:self.after_cancel(self._gallery_after)
+            except Exception:pass
+        self._gallery_after=self.after(80,self._render_visible_gallery)
 
     def render_gallery(self):
         query=self.search.get().strip().lower()
         self.filtered_groups=[g for g in self.groups if not query or query in g["name"].lower()]
         self._gallery_generation+=1
         generation=self._gallery_generation
-        for w in self.gallery.winfo_children(): w.destroy()
-        self.card_widgets={}
+        self._gallery_jobs={}
+        self._gallery_images={}
+        self.canvas.delete("all")
         self.people_count.config(text=f"{len(self.filtered_groups):,} people")
         if not self.filtered_groups:
             self._empty_gallery(); return
-        width=max(self.canvas.winfo_width(),900); cols=max(3,min(6,width//220))
-        jobs=[]
-        for idx,g in enumerate(self.filtered_groups):
-            r,c=divmod(idx,cols)
-            jobs.append((g,r,c))
-            self._person_card(g,r,c)
-        threading.Thread(target=self._load_gallery_thumbnails,args=(generation,jobs),daemon=True).start()
+        self.after_idle(self._render_visible_gallery)
 
-    def _load_gallery_thumbnails(self,generation,jobs):
-        from PIL import Image
-        for index,(g,r,c) in enumerate(jobs):
-            if generation!=self._gallery_generation: return
-            try:
-                path=service.person_thumbnail(g["id"])
-                if not path: continue
-                with Image.open(path) as im:
-                    im=ImageOps.fit(im.convert("RGB"),(190,190),method=Image.Resampling.LANCZOS)
-                    self._gallery_queue.put((generation,g["id"],im.copy()))
-                # Start painting as soon as the first thumbnails are ready instead
-                # of waiting for every person in a large library.
-                if index % 4 == 0:
-                    self.after(0,self._drain_gallery_queue)
-            except Exception: continue
-        self.after(0,self._drain_gallery_queue)
+    def _render_visible_gallery(self):
+        if not self.filtered_groups:return
+        generation=self._gallery_generation
+        width=max(self.canvas.winfo_width(),900)
+        card_w=170; card_h=235; gap=12
+        cols=max(3,min(7,int(width//(card_w+gap))))
+        rows=(len(self.filtered_groups)+cols-1)//cols
+        total_h=max(1,rows*(card_h+gap)+20)
+        self.canvas.configure(scrollregion=(0,0,width,total_h))
+        first=max(0,int(self.canvas.canvasy(0)//(card_h+gap))-1)
+        last=min(len(self.filtered_groups),int((self.canvas.canvasy(self.canvas.winfo_height())+self.canvas.canvasy(0))//(card_h+gap))+2)
+        self.canvas.delete("card")
+        for idx in range(first,last):
+            g=self.filtered_groups[idx]; r,c=divmod(idx,cols)
+            x=8+c*(card_w+gap); y=10+r*(card_h+gap)
+            ident=g["id"]; selected=ident in self.selected_ids
+            bg="#251b3a" if selected else CARD
+            self.canvas.create_rectangle(x,y,x+card_w,y+card_h,fill=bg,outline=ACCENT if selected else BORDER,width=1,tags=("card",f"person:{ident}"))
+            self.canvas.create_rectangle(x+6,y+6,x+card_w-6,y+176,fill=PANEL2,outline="",tags=("card",f"person:{ident}"))
+            self.canvas.create_text(x+card_w/2,y+91,text="◉",fill=MUTED,font=("Segoe UI",30),tags=("card",f"person:{ident}"))
+            self.canvas.create_text(x+10,y+190,text=g["name"],anchor="w",fill=TEXT,font=("Segoe UI",10,"bold"),
+                                    tags=("card",f"person:{ident}"))
+            self.canvas.create_text(x+10,y+211,text=f"{g['photos']:,} photos",anchor="w",fill=MUTED,font=("Segoe UI",8),
+                                    tags=("card",f"person:{ident}"))
+            if ident not in self._gallery_images and ident not in self._gallery_jobs:
+                self._gallery_jobs[ident]=generation
+                threading.Thread(target=self._load_one_gallery_thumbnail,args=(generation,ident),daemon=True).start()
 
-    def _drain_gallery_queue(self):
-        processed=0
-        while processed<6:
-            try: generation,ident,im=self._gallery_queue.get_nowait()
-            except queue.Empty: break
-            if generation!=self._gallery_generation: continue
-            card=self.card_widgets.get(ident)
-            if not card or not card.winfo_exists(): continue
+    def _load_one_gallery_thumbnail(self,generation,ident):
+        try:
+            path=service.person_thumbnail(ident)
+            if not path:return
+            with Image.open(path) as im:
+                im=ImageOps.fit(im.convert("RGB"),(158,158),method=Image.Resampling.LANCZOS)
+                data=im.copy()
+            self.after(0,self._install_gallery_thumbnail,generation,ident,data)
+        except Exception:
+            self.after(0,self._finish_gallery_job,generation,ident)
+
+    def _finish_gallery_job(self,generation,ident):
+        if generation==self._gallery_generation:self._gallery_jobs.pop(ident,None)
+
+    def _install_gallery_thumbnail(self,generation,ident,im):
+        if generation!=self._gallery_generation:return
+        try:
             photo=ImageTk.PhotoImage(im)
-            label=getattr(card,"_image_label",None)
-            if label and label.winfo_exists():
-                label.configure(image=photo,text="")
-                label.image=photo
-            processed+=1
-        if not self._gallery_queue.empty():
-            self.after(20,self._drain_gallery_queue)
+            self._gallery_images[ident]=photo
+            self._gallery_jobs.pop(ident,None)
+            self._render_visible_gallery()
+        except Exception:
+            self._finish_gallery_job(generation,ident)
 
-    def _person_card(self,g,row,col):
-        selected=g["id"] in self.selected_ids
-        card=tk.Frame(self.gallery,bg="#251b3a" if selected else CARD,highlightthickness=1,
-                      highlightbackground=ACCENT if selected else BORDER,cursor="hand2")
-        card.grid(row=row,column=col,sticky="nsew",padx=6,pady=6)
-        self.card_widgets[g["id"]]=card
-        thumb=None
-        if thumb:
-            image_label=tk.Label(card,image=thumb,bg=CARD); image_label.image=thumb
-        else:
-            image_label=tk.Label(card,text="◉",bg=CARD,fg=MUTED,font=("Segoe UI",32))
-        image_label.pack(fill="x",padx=5,pady=5)
-        info=tk.Frame(card,bg="#251b3a" if selected else CARD); info.pack(fill="x",padx=5,pady=(0,5))
-        tk.Label(info,text=g["name"],bg=info["bg"],fg=TEXT,font=("Segoe UI",10,"bold"),anchor="w").pack(fill="x",padx=7,pady=(6,0))
-        tk.Label(info,text=f"{g['photos']:,} photos",bg=info["bg"],fg=MUTED,font=("Segoe UI",8),anchor="w").pack(fill="x",padx=7,pady=(1,7))
-        for widget in (card,image_label,info):
-            widget.bind("<Button-1>",lambda e,ident=g["id"]:self.card_click(ident,e))
-            widget.bind("<Double-Button-1>",lambda e,ident=g["id"]:self.open_person(ident))
+    def _gallery_person_id(self,event):
+        item=self.canvas.find_withtag("current")
+        if not item:return None
+        tags=self.canvas.gettags(item[0])
+        for t in tags:
+            if t.startswith("person:"):
+                try:return int(t.split(":",1)[1])
+                except ValueError:return None
+        return None
 
-    def card_click(self,ident,event=None):
-        ctrl=bool(event and (event.state & 0x0004))
+    def _gallery_click(self,event):
+        ident=self._gallery_person_id(event)
+        if ident is None:return
+        ctrl=bool(event.state & 0x0004)
         if ctrl:
             if ident in self.selected_ids:self.selected_ids.remove(ident)
             else:self.selected_ids.add(ident)
         else:
             self.selected_ids={ident}
-            g=next((x for x in self.filtered_groups if x["id"]==ident),None)
-            if g:self.show_person(g)
-        self.render_gallery()
+        self.selection_label.config(text=f"{len(self.selected_ids)} selected")
+        self._render_visible_gallery()
+        if not ctrl:
+            self.open_person(ident)
 
-    def open_person(self,ident):
-        g=next((x for x in self.groups if x["id"]==ident),None)
-        if g:self.show_person(g)
+    def _gallery_double_click(self,event):
+        ident=self._gallery_person_id(event)
+        if ident is not None:self.open_person(ident)
 
-    def show_person(self,g):
-        win=tk.Toplevel(self); win.title(f"{g['name']} • Face Sorter"); win.geometry("1100x760"); win.configure(bg=BG)
-        tk.Label(win,text=g["name"],bg=BG,fg=TEXT,font=("Segoe UI",22,"bold")).pack(anchor="w",padx=24,pady=(20,0))
-        subtitle=tk.Label(win,text="Loading photos in background…",bg=BG,fg=MUTED,font=("Segoe UI",9)); subtitle.pack(anchor="w",padx=24,pady=(2,12))
-        host=tk.Frame(win,bg=BG); host.pack(fill="both",expand=True,padx=20,pady=8)
-        canvas=tk.Canvas(host,bg=BG,highlightthickness=0); sb=ttk.Scrollbar(host,orient="vertical",command=canvas.yview)
-        canvas.configure(yscrollcommand=sb.set); canvas.pack(side="left",fill="both",expand=True); sb.pack(side="right",fill="y")
-        grid=tk.Frame(canvas,bg=BG); canvas.create_window((0,0),window=grid,anchor="nw")
-        grid.bind("<Configure>",lambda e:canvas.configure(scrollregion=canvas.bbox("all")))
-        self.button(win,"Close",win.destroy).pack(pady=(0,18))
-        self._person_gallery_queue=queue.Queue()
-        self._person_gallery_generation=getattr(self,"_person_gallery_generation",0)+1
-        generation=self._person_gallery_generation
-        threading.Thread(target=self._load_person_gallery,args=(g,win,grid,subtitle,canvas,generation),daemon=True).start()
-
-    def _load_person_gallery(self,g,win,grid,subtitle,canvas,generation):
-        try:
-            photos=service.person_images(g["id"])
-        except Exception as e:
-            self.after(0,lambda e=e: subtitle.config(text=f"Could not load photos: {e}"))
-            return
-        if not win.winfo_exists(): return
-        self.photos=photos
-        self.photo_index=0
-        self.after(0,lambda: subtitle.config(text=f"{len(photos):,} photos • loading previews…"))
-        for index,path in enumerate(photos):
-            if not win.winfo_exists() or generation!=self._person_gallery_generation: return
-            try:
-                with Image.open(path) as im:
-                    im=ImageOps.fit(im.convert("RGB"),(180,180),method=Image.Resampling.LANCZOS)
-                    self._person_gallery_queue.put((generation,path,im.copy(),index))
-                if index % 4 == 0:
-                    self.after(0,self._drain_person_gallery,win,grid,canvas)
-            except (OSError,UnidentifiedImageError):
-                continue
-        self.after(0,self._drain_person_gallery,win,grid,canvas)
-
-    def _drain_person_gallery(self,win,grid,canvas):
-        if not win.winfo_exists(): return
-        made=0
-        while made<8:
-            try: generation,path,im,index=self._person_gallery_queue.get_nowait()
-            except queue.Empty: break
-            if generation!=self._person_gallery_generation: continue
-            photo=ImageTk.PhotoImage(im)
-            lab=tk.Label(grid,image=photo,bg=CARD,cursor="hand2")
-            lab.image=photo
-            lab.grid(row=index//5,column=index%5,padx=5,pady=5)
-            lab.bind("<Double-Button-1>",lambda e,p=path:os.startfile(p))
-            made+=1
-        grid.update_idletasks()
-        canvas.configure(scrollregion=canvas.bbox("all"))
-        if not self._person_gallery_queue.empty():
-            self.after(20,self._drain_person_gallery,win,grid,canvas)
+    def _person_card(self,*args,**kwargs):
+        # Kept for compatibility with older callers.
+        return None
 
     def _bottom_bar(self,main):
         bar=tk.Frame(main,bg=BG); bar.pack(fill="x",padx=30,pady=(10,18))
