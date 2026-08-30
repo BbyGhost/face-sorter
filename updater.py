@@ -1,7 +1,7 @@
 import json, shutil, subprocess, sys, tempfile, urllib.request
 from pathlib import Path
 
-APP_VERSION="1.7.0"
+APP_VERSION="1.8.0"
 UPDATE_MANIFEST_URL="https://raw.githubusercontent.com/BbyGhost/face-sorter/main/update-manifest.json"
 APP_DIR=Path(__file__).resolve().parent
 
