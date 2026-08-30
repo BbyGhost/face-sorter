@@ -8,14 +8,18 @@ if (-not (Test-Path $python)) {
   exit 1
 }
 
-Write-Host "Removing DirectML/CPU ONNX Runtime packages..." -ForegroundColor Yellow
+Write-Host "Removing conflicting ONNX Runtime packages..." -ForegroundColor Yellow
 & $python -m pip uninstall -y onnxruntime onnxruntime-directml onnxruntime-gpu
 
-Write-Host "Installing ONNX Runtime CUDA 12.x + cuDNN..." -ForegroundColor Cyan
-& $python -m pip install --upgrade "onnxruntime-gpu[cuda,cudnn]==1.26.0"
+Write-Host "Installing ONNX Runtime CUDA 12.8..." -ForegroundColor Cyan
+& $python -m pip install --upgrade "onnxruntime-gpu==1.26.0"
 
-Write-Host "Verifying ONNX Runtime providers..." -ForegroundColor Cyan
-& $python -c "import onnxruntime as ort; print('Providers:', ort.get_available_providers())"
+Write-Host "Installing NVIDIA CUDA 12 runtime DLL packages..." -ForegroundColor Cyan
+& $python -m pip install --upgrade "nvidia-cuda-runtime-cu12" "nvidia-cublas-cu12" "nvidia-cufft-cu12" "nvidia-curand-cu12" "nvidia-cusolver-cu12" "nvidia-cusparse-cu12" "nvidia-nvjitlink-cu12" "nvidia-cudnn-cu12"
+
+Write-Host "Preloading and verifying CUDA DLLs..." -ForegroundColor Cyan
+& $python -c "import onnxruntime as ort; print('ORT version:',ort.__version__); print('Preloading NVIDIA DLLs...'); ort.preload_dlls(directory=''); ort.print_debug_info(); print('Providers:',ort.get_available_providers()); assert 'CUDAExecutionProvider' in ort.get_available_providers(), 'CUDAExecutionProvider is unavailable'"
 
 Write-Host ""
-Write-Host "GPU setup complete. Restart Face Sorter and select GPU only." -ForegroundColor Green
+Write-Host "CUDA setup complete." -ForegroundColor Green
+Write-Host "Restart Face Sorter and select GPU only." -ForegroundColor Green
