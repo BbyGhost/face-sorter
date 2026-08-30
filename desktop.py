@@ -86,7 +86,7 @@ class FaceSorter(tk.Tk):
                                    values=("Auto (GPU preferred)","GPU only","CPU only","CPU + GPU"))
         self.mode_box.pack(side="left",padx=(10,14))
         self.button(controls,"▶  Scan library",self.start,True).pack(side="left")
-        self.button(controls,"Ⅱ  Pause",self.pause_scan).pack(side="left",padx=6)
+        self.button(controls,"Ⅱ  Pause / Resume",self.toggle_pause).pack(side="left",padx=6)
         self.button(controls,"■  Stop",self.stop_scan).pack(side="left")
         self.engine_label=tk.Label(controls,text="Checking engine…",bg=PANEL,fg=MUTED,font=("Segoe UI",9))
         self.engine_label.pack(side="right")
@@ -172,8 +172,8 @@ class FaceSorter(tk.Tk):
                       highlightbackground=ACCENT if selected else BORDER,cursor="hand2")
         card.grid(row=row,column=col,sticky="nsew",padx=6,pady=6)
         self.card_widgets[g["id"]]=card
-        imgs=service.person_images(g["id"])
-        thumb=self._thumbnail(imgs[0],190) if imgs else None
+        thumb_path=service.person_thumbnail(g["id"])
+        thumb=self._thumbnail(thumb_path,190) if thumb_path else None
         if thumb:
             image_label=tk.Label(card,image=thumb,bg=CARD); image_label.image=thumb
         else:
@@ -248,8 +248,10 @@ class FaceSorter(tk.Tk):
                 return messagebox.showerror("GPU unavailable",f"No CUDA/DirectML provider was found.\\n\\nDetected: {', '.join(available) or 'None'}")
         threading.Thread(target=service.scan,args=(path,mode),daemon=True).start()
 
-    def pause_scan(self):
-        try:service.pause_scan()
+    def toggle_pause(self):
+        try:
+            if service.STATE.get("pause_requested"): service.resume_scan()
+            else: service.pause_scan()
         except Exception as e:messagebox.showwarning("Scan",str(e))
     def stop_scan(self):
         if messagebox.askyesno("Stop scan","Stop the current scan? Completed results will be kept."):
