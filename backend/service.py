@@ -30,7 +30,7 @@ DB.execute('CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT)
 LOCK=threading.Lock(); DB_LOCK=threading.RLock(); PEOPLE_LOCK=threading.RLock()
 STATE={'state':'ready','message':'Choose a folder to begin.','total':0,'processed':0,'new':0,'unchanged':0,'failed':0,'faces':0,'speed':0.0,'eta_seconds':None,'provider':'','workers':0,'mode':'auto','last_error':'','last_file':'','last_faces':0}
 EXT={'.jpg','.jpeg','.png','.webp','.bmp','.tif','.tiff'}
-MODEL_VERSION='arcface-buffalo-l-fast-cuda-v5'
+MODEL_VERSION='arcface-buffalo-l-cuda-stable-v6'
 FACE_APPS={}; FACE_LOCK=threading.RLock()
 cv2.setLogLevel(0)
 app=FastAPI(docs_url=None,redoc_url=None)
@@ -66,7 +66,8 @@ def provider_for(engine):
     av=set(providers())
     if engine=='gpu':
         # Prefer CUDA on NVIDIA. DirectML remains available for non-CUDA GPUs.
-        if 'CUDAExecutionProvider' in av:return ['CUDAExecutionProvider','CPUExecutionProvider']
+        if 'CUDAExecutionProvider' in av:
+            return [('CUDAExecutionProvider', {'cudnn_conv_algo_search':'HEURISTIC','cudnn_conv_use_max_workspace':'1','do_copy_in_default_stream':'1','use_tf32':'1'}),'CPUExecutionProvider']
         if 'DmlExecutionProvider' in av:return ['DmlExecutionProvider','CPUExecutionProvider']
         raise RuntimeError('GPU mode requested, but CUDA/DirectML is unavailable.')
     return ['CPUExecutionProvider']
@@ -168,9 +169,9 @@ def scan(folder,mode='auto'):
     # CUDA supports concurrent inference calls; use two GPU workers to keep the NVIDIA device fed.
     # CPU inference uses several workers. Both-mode shares one queue so the faster engine gets more work.
     if mode=='cpu': worker_plan=['cpu']*cpu_workers
-    elif mode=='gpu': worker_plan=['gpu']*2*2
-    elif mode=='both': worker_plan=['gpu']*2+['cpu']*min(2,cpu_workers)
-    else: worker_plan=['gpu']*2 if engines==['gpu'] else ['cpu']*cpu_workers
+    elif mode=='gpu': worker_plan=['gpu']*2
+    elif mode=='both': worker_plan=['gpu']+['cpu']*min(2,cpu_workers)
+    else: worker_plan=['gpu'] if engines==['gpu'] else ['cpu']*cpu_workers
     label=' + '.join(engine_label(e) for e in engines)
     with LOCK:
         detected=STATE.get('provider') or label
