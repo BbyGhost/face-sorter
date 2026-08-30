@@ -190,7 +190,11 @@ class FaceSorter(tk.Tk):
             bg="#251b3a" if selected else CARD
             self.canvas.create_rectangle(x,y,x+card_w,y+card_h,fill=bg,outline=ACCENT if selected else BORDER,width=1,tags=("card",f"person:{ident}"))
             self.canvas.create_rectangle(x+6,y+6,x+card_w-6,y+176,fill=PANEL2,outline="",tags=("card",f"person:{ident}"))
-            self.canvas.create_text(x+card_w/2,y+91,text="◉",fill=MUTED,font=("Segoe UI",30),tags=("card",f"person:{ident}"))
+            photo=self._gallery_images.get(ident)
+            if photo:
+                self.canvas.create_image(x+card_w/2,y+91,image=photo,tags=("card",f"person:{ident}"))
+            else:
+                self.canvas.create_text(x+card_w/2,y+91,text="◉",fill=MUTED,font=("Segoe UI",30),tags=("card",f"person:{ident}"))
             self.canvas.create_text(x+10,y+190,text=g["name"],anchor="w",fill=TEXT,font=("Segoe UI",10,"bold"),
                                     tags=("card",f"person:{ident}"))
             self.canvas.create_text(x+10,y+211,text=f"{g['photos']:,} photos",anchor="w",fill=MUTED,font=("Segoe UI",8),
