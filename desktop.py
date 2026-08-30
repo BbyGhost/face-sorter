@@ -202,10 +202,9 @@ class FaceSorter(tk.Tk):
         if g:self.show_person(g)
 
     def show_person(self,g):
-        self.photos=service.person_images(g["id"]); self.photo_index=0
         win=tk.Toplevel(self); win.title(f"{g['name']} • Face Sorter"); win.geometry("1100x760"); win.configure(bg=BG)
         tk.Label(win,text=g["name"],bg=BG,fg=TEXT,font=("Segoe UI",22,"bold")).pack(anchor="w",padx=24,pady=(20,0))
-        tk.Label(win,text=f"{len(self.photos):,} photos • double-click a photo to open original",bg=BG,fg=MUTED,font=("Segoe UI",9)).pack(anchor="w",padx=24,pady=(2,12))
+        subtitle=tk.Label(win,text="Loading photos in background…",bg=BG,fg=MUTED,font=("Segoe UI",9)); subtitle.pack(anchor="w",padx=24,pady=(2,12))
         host=tk.Frame(win,bg=BG); host.pack(fill="both",expand=True,padx=20,pady=8)
         canvas=tk.Canvas(host,bg=BG,highlightthickness=0); sb=ttk.Scrollbar(host,orient="vertical",command=canvas.yview)
         canvas.configure(yscrollcommand=sb.set); canvas.pack(side="left",fill="both",expand=True); sb.pack(side="right",fill="y")
@@ -218,6 +217,29 @@ class FaceSorter(tk.Tk):
             lab=tk.Label(grid,image=th,bg=CARD,cursor="hand2"); lab.image=th; lab.grid(row=i//cols,column=i%cols,padx=5,pady=5)
             lab.bind("<Double-Button-1>",lambda e,p=path:os.startfile(p))
         self.button(win,"Close",win.destroy).pack(pady=(0,18))
+        threading.Thread(target=self._load_person_gallery,args=(g,win,grid,subtitle,canvas),daemon=True).start()
+
+    def _load_person_gallery(self,g,win,grid,subtitle,canvas):
+        try:
+            photos=service.person_images(g["id"])
+        except Exception as e:
+            self.after(0,lambda: subtitle.config(text=f"Could not load photos: {e}"))
+            return
+        def render():
+            if not win.winfo_exists(): return
+            self.photos=photos
+            self.photo_index=0
+            subtitle.config(text=f"{len(photos):,} photos • double-click a photo to open original")
+            for i,path in enumerate(photos):
+                th=self._thumbnail(path,180)
+                if not th: continue
+                lab=tk.Label(grid,image=th,bg=CARD,cursor="hand2")
+                lab.image=th
+                lab.grid(row=i//5,column=i%5,padx=5,pady=5)
+                lab.bind("<Double-Button-1>",lambda e,p=path:os.startfile(p))
+            grid.update_idletasks()
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        self.after(0,render)
 
     def _bottom_bar(self,main):
         bar=tk.Frame(main,bg=BG); bar.pack(fill="x",padx=30,pady=(10,18))
@@ -299,9 +321,22 @@ class FaceSorter(tk.Tk):
     def consolidate_existing(self):
         if service.STATE["state"]=="scanning":return messagebox.showinfo("Consolidate","Wait for the scan to finish.")
         if not messagebox.askyesno("Consolidate people","Find likely duplicate groups and combine them?\\n\\nPhotos will not be changed."):return
-        try:
-            n=service.consolidate_existing(); self.selected_ids.clear(); self.group_signature=[]; messagebox.showinfo("Consolidated",f"Combined {n} duplicate group(s).")
-        except ValueError as e:messagebox.showerror("Consolidate",str(e))
+        def worker():
+            try:
+                n=service.consolidate_existing()
+                def done():
+                    self._consolidating=False
+                    self.selected_ids.clear()
+                    self.group_signature=[]
+                    self.render_gallery()
+                    messagebox.showinfo("Consolidated",f"Combined {n} duplicate group(s).")
+                self.after(0,done)
+            except Exception as e:
+                self._consolidating=False
+                self.after(0,lambda:messagebox.showerror("Consolidate",str(e)))
+        self._consolidating=True
+        self.status.set("Consolidating people in the background…")
+        threading.Thread(target=worker,daemon=True).start()
 
     def export_selected(self):
         if len(self.selected_ids)!=1:return messagebox.showinfo("Export","Select one person.")
