@@ -230,8 +230,8 @@ def scan(folder,mode='auto'):
     if STATE.get('cancel_requested'):
         with LOCK: STATE.update(state='cancelled',message=f'Scan stopped — {completed:,} photos processed.')
         return
-    with LOCK: STATE['message']='Consolidating same-person groups…'
-    consolidate_people(0.62)
+    # Do not block the end of a scan with the expensive global consolidation pass.
+    # Users can start consolidation separately; the UI runs it in the background.
     elapsed=max(time.perf_counter()-start,.001)
     with LOCK: STATE.update(state='complete',message=f'Face scan complete — {completed:,} photos processed and groups consolidated.',speed=completed/elapsed,eta_seconds=0,pause_requested=False,cancel_requested=False)
 @app.get('/')
