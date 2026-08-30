@@ -1,6 +1,6 @@
 {
-  "version": "2.0.0",
-  "notes": "Combine same-person face clusters into one folder during export",
+  "version": "2.1.0",
+  "notes": "Global same-person clustering, manual merge, pause/resume/stop controls, and single GPU worker for stable CUDA throughput",
   "files": [
     {
       "path": "backend/service.py",
