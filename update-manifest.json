@@ -1,11 +1,7 @@
 {
-  "version": "1.3.0",
-  "notes": "Fix scan engine selection, report active execution provider, refresh model index",
+  "version": "1.4.0",
+  "notes": "Fix InsightFace GPU context and verify actual active provider",
   "files": [
-    {
-      "path": "desktop.py",
-      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/desktop.py"
-    },
     {
       "path": "backend/service.py",
       "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/service.py"
