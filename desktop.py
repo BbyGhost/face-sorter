@@ -72,6 +72,14 @@ class FaceSorter(tk.Tk):
         self.status.set(state['message']+extra if total else state['message'])
         if state.get('provider'):
             self.selected_mode_label.set(f"Running: {state['provider']} • Mode: {state.get('mode','auto').upper()}")
+        if state.get('state')=='scanning' and state.get('last_file'):
+            try:
+                image=Image.open(state['last_file']); image.thumbnail((390,390))
+                self.preview_image=ImageTk.PhotoImage(image)
+                self.preview.configure(image=self.preview_image,text="")
+                self.photo_text.set(f"Scanning: {state['last_file']}")
+            except (OSError,UnidentifiedImageError):
+                pass
         selected=self.people.curselection(); current=self.groups[selected[0]]['id'] if selected and selected[0]<len(self.groups) else None; groups=service.people()
         signature=[(group['id'],group['name'],group['photos']) for group in groups]
         if signature!=self.group_signature:
