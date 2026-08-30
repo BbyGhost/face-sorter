@@ -1,6 +1,6 @@
 {
-  "version": "3.2.3",
-  "notes": "Fix startup crash in People gallery caused by missing click handler.",
+  "version": "3.2.4",
+  "notes": "Fix People gallery: keep all person cards stable during scrolling and load thumbnails only for visible cards.",
   "files": [
     {
       "path": "desktop.py",
