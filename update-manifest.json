@@ -1,14 +1,22 @@
 {
-  "version": "2.2.0",
-  "notes": "Premium modern desktop UI with sidebar, dashboard stats, cleaner scan controls, search, and redesigned preview/export workflow",
+  "version": "3.0.0",
+  "notes": "Major premium Google Photos inspired gallery, visual people cards, person gallery viewer, selection/merge workflow, optimized thumbnails, scan controls, and polished dashboard.",
   "files": [
     {
       "path": "desktop.py",
       "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/desktop.py"
     },
     {
+      "path": "backend/service.py",
+      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/service.py"
+    },
+    {
       "path": "updater.py",
       "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/updater.py"
+    },
+    {
+      "path": "version.json",
+      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/version.json"
     }
   ]
 }
