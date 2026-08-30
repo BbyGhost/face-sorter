@@ -43,7 +43,7 @@ class FaceSorter(tk.Tk):
         self.people.bind("<<ListboxSelect>>",self.select_person); people_actions=ttk.Frame(left); people_actions.pack(fill="x",pady=(10,0)); ttk.Button(people_actions,text="Rename selected",command=self.rename).pack(side="left"); ttk.Button(people_actions,text="Merge selected",command=self.merge_selected).pack(side="left",padx=(8,0))
         right=ttk.Frame(content,width=400); right.pack(side="right",fill="both"); right.pack_propagate(False); ttk.Label(right,text="Photo preview",font=("Segoe UI",15,"bold")).pack(anchor="w"); self.preview=tk.Label(right,text="Select a person to view photos",bg="#1c1f27",fg="#adb2bf",width=45,height=18,anchor="center"); self.preview.pack(fill="both",expand=True,pady=(10,8)); self.photo_text=tk.StringVar(value=""); ttk.Label(right,textvariable=self.photo_text,style="Sub.TLabel",wraplength=370).pack(anchor="w")
         controls=ttk.Frame(right); controls.pack(fill="x",pady=(8,0)); ttk.Button(controls,text="◀ Previous",command=lambda:self.move_photo(-1)).pack(side="left"); ttk.Button(controls,text="Next ▶",command=lambda:self.move_photo(1)).pack(side="left",padx=7); ttk.Button(controls,text="Open photo",command=self.open_photo).pack(side="right")
-        bottom=ttk.Frame(outer); bottom.pack(fill="x",pady=(16,0)); ttk.Button(bottom,text="Reset library",command=self.reset).pack(side="left"); ttk.Button(bottom,text="Check for updates",command=self.check_updates).pack(side="left",padx=(8,0)); ttk.Button(bottom,text="Sort into person folders",command=self.export_all).pack(side="right"); ttk.Button(bottom,text="Export selected person",command=self.export_selected).pack(side="right",padx=(0,8)); ttk.Button(bottom,text="Export photos without faces",command=self.export).pack(side="right",padx=(0,8))
+        bottom=ttk.Frame(outer); bottom.pack(fill="x",pady=(16,0)); ttk.Button(bottom,text="Reset library",command=self.reset).pack(side="left"); ttk.Button(bottom,text="Consolidate people",command=self.consolidate_existing).pack(side="left",padx=(8,0)); ttk.Button(bottom,text="Check for updates",command=self.check_updates).pack(side="left",padx=(8,0)); ttk.Button(bottom,text="Sort into person folders",command=self.export_all).pack(side="right"); ttk.Button(bottom,text="Export selected person",command=self.export_selected).pack(side="right",padx=(0,8)); ttk.Button(bottom,text="Export photos without faces",command=self.export).pack(side="right",padx=(0,8))
     def pause_scan(self):
         try: service.pause_scan()
         except Exception as error: messagebox.showwarning("Face Sorter",str(error))
@@ -153,6 +153,13 @@ class FaceSorter(tk.Tk):
         if folder:
             if not messagebox.askyesno("Sort photos", "Create one folder per detected person and copy the matching photos there?\n\nYour original photos will not be changed."):return
             result=service.export_all_people(folder);messagebox.showinfo("Face Sorter",f"Sorted {result['copied']} photo(s) into {result['groups']} combined person folder(s) from {result.get('original_groups', result['groups'])} detected groups:\n{result['folder']}")
+    def consolidate_existing(self):
+        if service.STATE['state']=='scanning':return messagebox.showinfo("Face Sorter","Wait for the scan to finish first.")
+        if not messagebox.askyesno("Consolidate people","Find groups that are likely the same person and combine them?\n\nYour photos are not changed."):
+            return
+        try:
+            merged=service.consolidate_existing(); self.group_signature=[]; messagebox.showinfo("Face Sorter",f"Consolidated {merged} duplicate group(s).")
+        except ValueError as error: messagebox.showerror("Face Sorter",str(error))
     def check_updates(self):
         def worker():
             try:
