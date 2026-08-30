@@ -1,6 +1,6 @@
 {
-  "version": "3.0.0",
-  "notes": "Major premium Google Photos inspired gallery, visual people cards, person gallery viewer, selection/merge workflow, optimized thumbnails, scan controls, and polished dashboard.",
+  "version": "3.0.1",
+  "notes": "Fix UI freezes while opening large person galleries and run consolidation in the background. Adds safe consolidation state tracking.",
   "files": [
     {
       "path": "desktop.py",
@@ -13,10 +13,6 @@
     {
       "path": "updater.py",
       "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/updater.py"
-    },
-    {
-      "path": "version.json",
-      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/version.json"
     }
   ]
 }
