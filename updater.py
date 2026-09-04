@@ -1,6 +1,6 @@
 import hashlib, json, os, shutil, subprocess, sys, tempfile, urllib.request
 from pathlib import Path
-APP_VERSION="3.3.5"
+APP_VERSION="3.3.6"
 UPDATE_MANIFEST_URL="https://raw.githubusercontent.com/BbyGhost/face-sorter/main/update-manifest.json"
 APP_DIR=Path(__file__).resolve().parent
 BACKUP_DIR=APP_DIR/".update-backup"
@@ -15,7 +15,7 @@ def check():
         expected=item.get("sha256")
         if expected and hashlib.sha256(target.read_bytes()).hexdigest().lower()==str(expected).lower():continue
         changed.append(item)
-    return {"update":remote!=APP_VERSION and bool(changed),"current":APP_VERSION,"remote":remote,"changed":changed,"manifest":data}
+    return {"update":bool(changed),"current":APP_VERSION,"remote":remote,"changed":changed,"manifest":data}
 def apply(result):
     changed=result.get("changed",[])
     if not changed:return False
@@ -33,7 +33,7 @@ def apply(result):
             target.parent.mkdir(parents=True,exist_ok=True);os.replace(str(temp),str(target))
     return True
 def restart():
-    launcher=APP_DIR/"launcher_v7.py"
-    target=launcher if launcher.exists() else (APP_DIR/"launcher_v6.py" if (APP_DIR/"launcher_v6.py").exists() else APP_DIR/"desktop.py")
+    launcher=APP_DIR/"launcher_v8.py"
+    target=launcher if launcher.exists() else (APP_DIR/"launcher_v7.py" if (APP_DIR/"launcher_v7.py").exists() else APP_DIR/"desktop.py")
     subprocess.Popen([sys.executable,str(target)],cwd=str(APP_DIR),creationflags=getattr(subprocess,"CREATE_NEW_PROCESS_GROUP",0),close_fds=True)
 if __name__=="__main__":print(json.dumps(check(),indent=2))
