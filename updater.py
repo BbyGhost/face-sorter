@@ -1,7 +1,7 @@
 import hashlib, json, os, shutil, subprocess, sys, tempfile, urllib.request
 from pathlib import Path
 
-APP_VERSION="3.2.4"
+APP_VERSION="3.3.0"
 UPDATE_MANIFEST_URL="https://raw.githubusercontent.com/BbyGhost/face-sorter/main/update-manifest.json"
 APP_DIR=Path(__file__).resolve().parent
 BACKUP_DIR=APP_DIR/".update-backup"
@@ -14,7 +14,6 @@ def check():
     manifest=download_bytes(UPDATE_MANIFEST_URL,15)
     data=json.loads(manifest.decode("utf-8"))
     remote=str(data.get("version",APP_VERSION))
-    if remote==APP_VERSION:return {"update":False,"current":APP_VERSION,"remote":remote,"changed":[],"manifest":data}
     changed=[]
     for item in data.get("files",[]):
         target=APP_DIR/Path(item["path"])
@@ -23,9 +22,8 @@ def check():
         if expected:
             h=hashlib.sha256(target.read_bytes()).hexdigest()
             if h.lower()!=str(expected).lower(): changed.append(item)
-        else:
-            changed.append(item)
-    return {"update":bool(changed),"current":APP_VERSION,"remote":remote,"changed":changed,"manifest":data}
+        else: changed.append(item)
+    return {"update":remote!=APP_VERSION and bool(changed),"current":APP_VERSION,"remote":remote,"changed":changed,"manifest":data}
 
 def apply(result):
     changed=result.get("changed",[])
@@ -44,13 +42,12 @@ def apply(result):
             rel=Path(item["path"]); target=APP_DIR/rel
             if target.exists():
                 backup=BACKUP_DIR/rel; backup.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(target,backup)
-            target.parent.mkdir(parents=True,exist_ok=True)
-            os.replace(str(temp),str(target))
+            target.parent.mkdir(parents=True,exist_ok=True); os.replace(str(temp),str(target))
     return True
 
 def restart():
-    desktop=APP_DIR/"desktop.py"
-    subprocess.Popen([sys.executable,str(desktop)],cwd=str(APP_DIR),creationflags=getattr(subprocess,"CREATE_NEW_PROCESS_GROUP",0),close_fds=True)
+    launcher=APP_DIR/"launcher.py"
+    target=launcher if launcher.exists() else APP_DIR/"desktop.py"
+    subprocess.Popen([sys.executable,str(target)],cwd=str(APP_DIR),creationflags=getattr(subprocess,"CREATE_NEW_PROCESS_GROUP",0),close_fds=True)
 
-if __name__=="__main__":
-    print(json.dumps(check(),indent=2))
+if __name__=="__main__":print(json.dumps(check(),indent=2))
