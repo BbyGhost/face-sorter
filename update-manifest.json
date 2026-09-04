@@ -1,14 +1,12 @@
 {
-  "version": "3.3.4",
-  "notes": "Fixes person gallery thumbnails by moving all Tk updates to the main thread and loading previews through a safe queue.",
+  "version": "3.3.5",
+  "notes": "Adds exact duplicate photo detection and a review-before-delete manager.",
   "files": [
-    {"path": "desktop.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/desktop.py"},
     {"path": "backend/service.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/service.py"},
     {"path": "updater.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/updater.py"},
     {"path": "version.json", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/version.json"},
-    {"path": "launcher_v4.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/launcher_v4.py"},
-    {"path": "launcher_v5.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/launcher_v5.py"},
     {"path": "launcher_v6.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/launcher_v6.py"},
+    {"path": "launcher_v7.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/launcher_v7.py"},
     {"path": "run-desktop.ps1", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/run-desktop.ps1"}
   ]
 }
