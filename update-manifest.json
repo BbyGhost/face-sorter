@@ -1,22 +1,12 @@
 {
-  "version": "3.2.4",
-  "notes": "Fix People gallery: keep all person cards stable during scrolling and load thumbnails only for visible cards.",
+  "version": "3.3.0",
+  "notes": "Major UX/performance upgrade: recycled People gallery, stable selection, debounced search, sorting, keyboard selection, background exports, and persistent face-memory preservation during merges/consolidation.",
   "files": [
-    {
-      "path": "desktop.py",
-      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/desktop.py"
-    },
-    {
-      "path": "backend/service.py",
-      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/service.py"
-    },
-    {
-      "path": "updater.py",
-      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/updater.py"
-    },
-    {
-      "path": "version.json",
-      "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/version.json"
-    }
+    {"path": "desktop.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/desktop.py"},
+    {"path": "backend/service.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/service.py"},
+    {"path": "updater.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/updater.py"},
+    {"path": "version.json", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/version.json"},
+    {"path": "launcher.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/launcher.py"},
+    {"path": "run-desktop.ps1", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/run-desktop.ps1"}
   ]
 }
