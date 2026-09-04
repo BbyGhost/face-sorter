@@ -8,8 +8,6 @@ import cv2
 import numpy as np
 try:
     import onnxruntime as ort
-    # ORT 1.21+ can preload CUDA/cuDNN DLLs from NVIDIA Python packages.
-    # Do this before InsightFace creates any ONNX sessions.
     if hasattr(ort,'preload_dlls'):
         try: ort.preload_dlls(directory="")
         except Exception: pass
@@ -19,7 +17,6 @@ except ImportError:
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-
 ROOT=Path(__file__).resolve().parent.parent; DATA=ROOT/'data'; DATA.mkdir(exist_ok=True)
 DB=sqlite3.connect(DATA/'index.sqlite',check_same_thread=False)
 DB.execute('CREATE TABLE IF NOT EXISTS images(path TEXT PRIMARY KEY,modified_ns INTEGER,digest TEXT,scanned_at TEXT)')
@@ -33,14 +30,11 @@ LOCK=threading.Lock(); DB_LOCK=threading.RLock(); PEOPLE_LOCK=threading.RLock()
 STATE={'state':'ready','message':'Choose a folder to begin.','total':0,'processed':0,'new':0,'unchanged':0,'failed':0,'faces':0,'speed':0.0,'eta_seconds':None,'provider':'','workers':0,'mode':'auto','last_error':'','last_file':'','last_faces':0,'pause_requested':False,'cancel_requested':False,'consolidating':False}
 EXT={'.jpg','.jpeg','.png','.webp','.bmp','.tif','.tiff'}
 MODEL_VERSION='arcface-buffalo-l-cuda-stable-v6'
-FACE_APPS={}; FACE_LOCK=threading.RLock()
-cv2.setLogLevel(0)
-app=FastAPI(docs_url=None,redoc_url=None)
+FACE_APPS={}; FACE_LOCK=threading.RLock(); cv2.setLogLevel(0); app=FastAPI(docs_url=None,redoc_url=None)
 class ScanRequest(BaseModel): folder:str; mode:str='auto'
 class ExportRequest(BaseModel): output_folder:str
 
-def safe_folder_name(name:str):
-    return ''.join('_' if char in '<>:"/\\|?*' else char for char in name).strip('. ') or 'Unnamed person'
+def safe_folder_name(name:str): return ''.join('_' if char in '<>:"/\\|?*' else char for char in name).strip('. ') or 'Unnamed person'
 def copy_to_folder(paths,folder:Path):
     folder.mkdir(parents=True,exist_ok=True); count=0
     for raw in paths:
@@ -52,9 +46,8 @@ def copy_to_folder(paths,folder:Path):
     return count
 def providers(): return ort.get_available_providers() if ort else []
 def active_model_providers(engine):
-    model=FACE_APPS.get(engine)
+    model=FACE_APPS.get(engine); found=set()
     if model is None:return []
-    found=set()
     for item in getattr(model,'models',{}).values():
         session=getattr(item,'session',None)
         if session is not None:
@@ -62,14 +55,11 @@ def active_model_providers(engine):
             except Exception: pass
     return sorted(found)
 def normalize_mode(mode):
-    value=(mode or 'auto').strip().lower()
-    return value if value in {'auto','gpu','cpu','both'} else 'auto'
+    value=(mode or 'auto').strip().lower(); return value if value in {'auto','gpu','cpu','both'} else 'auto'
 def provider_for(engine):
     av=set(providers())
     if engine=='gpu':
-        # Prefer CUDA on NVIDIA. DirectML remains available for non-CUDA GPUs.
-        if 'CUDAExecutionProvider' in av:
-            return [('CUDAExecutionProvider', {'cudnn_conv_algo_search':'HEURISTIC','cudnn_conv_use_max_workspace':'1','do_copy_in_default_stream':'1','use_tf32':'1'}),'CPUExecutionProvider']
+        if 'CUDAExecutionProvider' in av:return [('CUDAExecutionProvider',{'cudnn_conv_algo_search':'HEURISTIC','cudnn_conv_use_max_workspace':'1','do_copy_in_default_stream':'1','use_tf32':'1'}),'CPUExecutionProvider']
         if 'DmlExecutionProvider' in av:return ['DmlExecutionProvider','CPUExecutionProvider']
         raise RuntimeError('GPU mode requested, but CUDA/DirectML is unavailable.')
     return ['CPUExecutionProvider']
@@ -77,224 +67,155 @@ def prepare_model(engine):
     if FaceAnalysis is None: raise RuntimeError('Face model is not installed. Run pip install -r backend\\requirements.txt.')
     with FACE_LOCK:
         if engine not in FACE_APPS:
-            ps=provider_for(engine)
-            model=FaceAnalysis(name='buffalo_l',allowed_modules=['detection','recognition'],providers=ps)
-            # ctx_id=-1 is CPU in InsightFace; use GPU context when GPU mode is requested.
-            ctx_id=0 if engine=='gpu' else -1
-            model.prepare(ctx_id=ctx_id,det_size=(320,320))
-            # Verify the actual ONNX sessions, not only the requested provider list.
+            model=FaceAnalysis(name='buffalo_l',allowed_modules=['detection','recognition'],providers=provider_for(engine)); model.prepare(ctx_id=0 if engine=='gpu' else -1,det_size=(320,320))
             active=set()
             for item in getattr(model,'models',{}).values():
                 session=getattr(item,'session',None)
                 if session is not None:
                     try: active.update(session.get_providers())
                     except Exception: pass
-            if engine=='gpu' and not ({'DmlExecutionProvider','CUDAExecutionProvider'} & active):
-                raise RuntimeError(f"GPU requested but model sessions are using {sorted(active) or ['unknown']}.")
+            if engine=='gpu' and not ({'DmlExecutionProvider','CUDAExecutionProvider'} & active): raise RuntimeError(f"GPU requested but model sessions are using {sorted(active) or ['unknown']}.")
             FACE_APPS[engine]=model
     return FACE_APPS[engine]
-def engine_label(engine):
-    return 'GPU (CUDA preferred)' if engine=='gpu' else 'CPU'
+def engine_label(engine): return 'GPU (CUDA preferred)' if engine=='gpu' else 'CPU'
 def mode_plan(mode):
-    av=set(providers()); has_gpu=('DmlExecutionProvider' in av or 'CUDAExecutionProvider' in av)
-    if mode=='cpu': return ['cpu']
+    av=set(providers()); has_gpu='DmlExecutionProvider' in av or 'CUDAExecutionProvider' in av
+    if mode=='cpu':return ['cpu']
     if mode=='gpu':
-        if not has_gpu: raise RuntimeError('GPU mode requested, but no DirectML/CUDA provider is installed.')
+        if not has_gpu:raise RuntimeError('GPU mode requested, but no DirectML/CUDA provider is installed.')
         return ['gpu']
     if mode=='both':
-        if not has_gpu: raise RuntimeError('CPU + GPU mode requested, but no DirectML/CUDA provider is installed.')
+        if not has_gpu:raise RuntimeError('CPU + GPU mode requested, but no DirectML/CUDA provider is installed.')
         return ['gpu','cpu']
     return ['gpu'] if has_gpu else ['cpu']
 def migrate_model_index():
-    # Identity memory survives incremental scans. Model changes invalidate
-    # assignments, but not the learned person prototypes.
     with DB_LOCK:
         row=DB.execute('SELECT value FROM settings WHERE key=?',('face_model',)).fetchone()
-        if not row:
-            DB.execute('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)',('face_model',MODEL_VERSION))
+        if not row:DB.execute('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)',('face_model',MODEL_VERSION))
         elif row[0]!=MODEL_VERSION:
-            DB.execute('DELETE FROM faces'); DB.execute('DELETE FROM face_processed')
-            DB.execute('UPDATE people SET photos=0')
-            DB.execute('DELETE FROM settings WHERE key=?',('face_model',))
-            DB.execute('INSERT INTO settings(key,value) VALUES(?,?)',('face_model',MODEL_VERSION))
+            DB.execute('DELETE FROM faces');DB.execute('DELETE FROM face_processed');DB.execute('UPDATE people SET photos=0');DB.execute('DELETE FROM settings WHERE key=?',('face_model',));DB.execute('INSERT INTO settings(key,value) VALUES(?,?)',('face_model',MODEL_VERSION))
         rows=DB.execute('SELECT id,embedding FROM people WHERE embedding IS NOT NULL').fetchall()
         for ident,raw in rows:
-            if not DB.execute('SELECT 1 FROM person_embeddings WHERE person_id=? LIMIT 1',(ident,)).fetchone():
-                DB.execute('INSERT OR IGNORE INTO person_embeddings(person_id,embedding,created_at) VALUES(?,?,?)',
-                           (ident,raw,datetime.now(timezone.utc).isoformat()))
+            if not DB.execute('SELECT 1 FROM person_embeddings WHERE person_id=? LIMIT 1',(ident,)).fetchone():DB.execute('INSERT OR IGNORE INTO person_embeddings(person_id,embedding,created_at) VALUES(?,?,?)',(ident,raw,datetime.now(timezone.utc).isoformat()))
         DB.commit()
-
 def descriptors(file,engine):
     try:
-        raw=np.fromfile(str(file),dtype=np.uint8); image=cv2.imdecode(raw,cv2.IMREAD_COLOR)
+        raw=np.fromfile(str(file),dtype=np.uint8);image=cv2.imdecode(raw,cv2.IMREAD_COLOR)
         if image is None:return []
-        h,w=image.shape[:2]; largest=max(h,w)
+        h,w=image.shape[:2];largest=max(h,w)
         if largest>1600:
-            scale=1600/largest; image=cv2.resize(image,(round(w*scale),round(h*scale)),interpolation=cv2.INTER_AREA)
-        faces=prepare_model(engine).get(image)
-        out=[]
+            scale=1600/largest;image=cv2.resize(image,(round(w*scale),round(h*scale)),interpolation=cv2.INTER_AREA)
+        faces=prepare_model(engine).get(image);out=[]
         for face in faces:
-            emb=np.asarray(face.embedding,dtype=np.float32); emb/=np.linalg.norm(emb)+1e-8; out.append(emb)
+            emb=np.asarray(face.embedding,dtype=np.float32);emb/=np.linalg.norm(emb)+1e-8;out.append(emb)
         return out
     except Exception as error:
-        with LOCK: STATE['last_error']=f"{Path(file).name}: {error}"
+        with LOCK:STATE['last_error']=f"{Path(file).name}: {error}"
         return []
 def load_people():
-    with DB_LOCK:
-        rows=DB.execute('SELECT id,name,embedding,photos FROM people').fetchall()
-        proto_rows=DB.execute('SELECT person_id,embedding FROM person_embeddings').fetchall()
+    with DB_LOCK:rows=DB.execute('SELECT id,name,embedding,photos FROM people').fetchall();proto_rows=DB.execute('SELECT person_id,embedding FROM person_embeddings').fetchall()
     result={}
     for ident,name,raw,photos in rows:
-        if not raw: continue
-        vec=np.frombuffer(raw,dtype=np.float32).copy(); vec/=np.linalg.norm(vec)+1e-8
-        result[int(ident)]={'name':name,'embedding':vec,'photos':int(photos or 0),'prototypes':[]}
+        if not raw:continue
+        vec=np.frombuffer(raw,dtype=np.float32).copy();vec/=np.linalg.norm(vec)+1e-8;result[int(ident)]={'name':name,'embedding':vec,'photos':int(photos or 0),'prototypes':[]}
     for ident,raw in proto_rows:
         if int(ident) in result:
-            v=np.frombuffer(raw,dtype=np.float32).copy(); v/=np.linalg.norm(v)+1e-8
-            result[int(ident)]['prototypes'].append(v)
+            v=np.frombuffer(raw,dtype=np.float32).copy();v/=np.linalg.norm(v)+1e-8;result[int(ident)]['prototypes'].append(v)
     for p in result.values():
-        if not p['prototypes']: p['prototypes']=[p['embedding'].copy()]
+        if not p['prototypes']:p['prototypes']=[p['embedding'].copy()]
     return result
-
 def _remember_prototype(ident,vector,person):
-    prototypes=person.setdefault('prototypes',[person['embedding'].copy()])
-    best=max(float(x@vector) for x in prototypes)
-    if best>=0.965: return
+    prototypes=person.setdefault('prototypes',[person['embedding'].copy()]);best=max(float(x@vector) for x in prototypes)
+    if best>=0.965:return
     if len(prototypes)<12:
         prototypes.append(vector.copy())
-        with DB_LOCK:
-            DB.execute('INSERT OR IGNORE INTO person_embeddings(person_id,embedding,created_at) VALUES(?,?,?)',
-                       (ident,vector.astype(np.float32).tobytes(),datetime.now(timezone.utc).isoformat()))
+        with DB_LOCK:DB.execute('INSERT OR IGNORE INTO person_embeddings(person_id,embedding,created_at) VALUES(?,?,?)',(ident,vector.astype(np.float32).tobytes(),datetime.now(timezone.utc).isoformat()))
     else:
-        # Keep the most useful diversity of appearances.
-        sims=[float(x@vector) for x in prototypes]
-        replace=int(np.argmin(sims)); old=prototypes[replace]; prototypes[replace]=vector.copy()
+        sims=[float(x@vector) for x in prototypes];replace=int(np.argmin(sims));old=prototypes[replace];prototypes[replace]=vector.copy()
         with DB_LOCK:
-            DB.execute('DELETE FROM person_embeddings WHERE person_id=? AND embedding=?',
-                       (ident,old.astype(np.float32).tobytes()))
-            DB.execute('INSERT OR IGNORE INTO person_embeddings(person_id,embedding,created_at) VALUES(?,?,?)',
-                       (ident,vector.astype(np.float32).tobytes(),datetime.now(timezone.utc).isoformat()))
-
+            DB.execute('DELETE FROM person_embeddings WHERE person_id=? AND embedding=?',(ident,old.astype(np.float32).tobytes()));DB.execute('INSERT OR IGNORE INTO person_embeddings(person_id,embedding,created_at) VALUES(?,?,?)',(ident,vector.astype(np.float32).tobytes(),datetime.now(timezone.utc).isoformat()))
 def match(vector,people):
     if not people:
         with DB_LOCK:
-            ident=int(DB.execute('SELECT COALESCE(MAX(id),0)+1 FROM people').fetchone()[0])
-            raw=vector.astype(np.float32).tobytes()
-            DB.execute('INSERT INTO people(id,name,embedding,photos) VALUES(?,?,?,0)',(ident,f'Person {ident}',raw))
-            DB.execute('INSERT OR IGNORE INTO person_embeddings(person_id,embedding,created_at) VALUES(?,?,?)',
-                       (ident,raw,datetime.now(timezone.utc).isoformat()))
-        people[ident]={'name':f'Person {ident}','embedding':vector.copy(),'photos':0,'prototypes':[vector.copy()]}
-        return ident
-    best_id=None; best_score=-1.0
+            ident=int(DB.execute('SELECT COALESCE(MAX(id),0)+1 FROM people').fetchone()[0]);raw=vector.astype(np.float32).tobytes();DB.execute('INSERT INTO people(id,name,embedding,photos) VALUES(?,?,?,0)',(ident,f'Person {ident}',raw));DB.execute('INSERT OR IGNORE INTO person_embeddings(person_id,embedding,created_at) VALUES(?,?,?)',(ident,raw,datetime.now(timezone.utc).isoformat()))
+        people[ident]={'name':f'Person {ident}','embedding':vector.copy(),'photos':0,'prototypes':[vector.copy()]};return ident
+    best_id=None;best_score=-1.0
     for ident,p in people.items():
         score=max(float(proto@vector) for proto in (p.get('prototypes') or [p['embedding']]))
-        if score>best_score: best_score=score; best_id=ident
+        if score>best_score:best_score=score;best_id=ident
     if best_id is not None and best_score>=0.58:
-        p=people[best_id]; count=p['photos']
-        updated=(p['embedding']*count+vector)/(count+1); updated/=np.linalg.norm(updated)+1e-8
-        p['embedding']=updated; p['photos']=count+1
-        _remember_prototype(best_id,vector,p)
-        return best_id
+        p=people[best_id];count=p['photos'];updated=(p['embedding']*count+vector)/(count+1);updated/=np.linalg.norm(updated)+1e-8;p['embedding']=updated;p['photos']=count+1;_remember_prototype(best_id,vector,p);return best_id
     with DB_LOCK:
-        ident=int(DB.execute('SELECT COALESCE(MAX(id),0) FROM people').fetchone()[0])+1
-        raw=vector.astype(np.float32).tobytes()
-        DB.execute('INSERT INTO people(id,name,embedding,photos) VALUES(?,?,?,0)',(ident,f'Person {ident}',raw))
-        DB.execute('INSERT OR IGNORE INTO person_embeddings(person_id,embedding,created_at) VALUES(?,?,?)',
-                   (ident,raw,datetime.now(timezone.utc).isoformat()))
-    people[ident]={'name':f'Person {ident}','embedding':vector.copy(),'photos':0,'prototypes':[vector.copy()]}
-    return ident
-
+        ident=int(DB.execute('SELECT COALESCE(MAX(id),0) FROM people').fetchone()[0])+1;raw=vector.astype(np.float32).tobytes();DB.execute('INSERT INTO people(id,name,embedding,photos) VALUES(?,?,?,0)',(ident,f'Person {ident}',raw));DB.execute('INSERT OR IGNORE INTO person_embeddings(person_id,embedding,created_at) VALUES(?,?,?)',(ident,raw,datetime.now(timezone.utc).isoformat()))
+    people[ident]={'name':f'Person {ident}','embedding':vector.copy(),'photos':0,'prototypes':[vector.copy()]};return ident
 def persist_people(people):
     with DB_LOCK:
-        for ident,p in people.items():
-            DB.execute('UPDATE people SET embedding=?,photos=? WHERE id=?',(p['embedding'].astype(np.float32).tobytes(),p['photos'],ident))
+        for ident,p in people.items():DB.execute('UPDATE people SET embedding=?,photos=? WHERE id=?',(p['embedding'].astype(np.float32).tobytes(),p['photos'],ident))
         DB.commit()
 def scan(folder,mode='auto'):
     mode=normalize_mode(mode)
     try:
-        with LOCK: STATE.update(state='scanning',message='Loading face models…',total=0,processed=0,new=0,unchanged=0,failed=0,faces=0,speed=0.0,eta_seconds=None,mode=mode,provider='',workers=0,pause_requested=False,cancel_requested=False)
-        migrate_model_index(); engines=mode_plan(mode)
-        for e in engines: prepare_model(e)
+        with LOCK:STATE.update(state='scanning',message='Loading face models…',total=0,processed=0,new=0,unchanged=0,failed=0,faces=0,speed=0.0,eta_seconds=None,mode=mode,provider='',workers=0,pause_requested=False,cancel_requested=False)
+        migrate_model_index();engines=mode_plan(mode)
+        for e in engines:prepare_model(e)
         active=[]
-        for e in engines: active.extend(active_model_providers(e))
-        with LOCK: STATE['provider']=' + '.join(sorted(set(active))) or 'CPUExecutionProvider'
+        for e in engines:active.extend(active_model_providers(e))
+        with LOCK:STATE['provider']=' + '.join(sorted(set(active))) or 'CPUExecutionProvider'
     except Exception as error:
-        with LOCK: STATE.update(state='error',message=f'Face model could not start: {error}')
+        with LOCK:STATE.update(state='error',message=f'Face model could not start: {error}')
         return
     files=[p for p in folder.rglob('*') if p.is_file() and p.suffix.lower() in EXT]
-    with DB_LOCK: existing={r[0]:r[1] for r in DB.execute('SELECT path,modified_ns FROM images').fetchall()}
-    people=load_people()
-    cpu_workers=max(2,min(4,(os.cpu_count() or 4)//2))
-    # CUDA supports concurrent inference calls; use two GPU workers to keep the NVIDIA device fed.
-    # CPU inference uses several workers. Both-mode shares one queue so the faster engine gets more work.
-    if mode=='cpu': worker_plan=['cpu']*cpu_workers
-    elif mode=='gpu': worker_plan=['gpu']
-    elif mode=='both': worker_plan=['gpu']+['cpu']*min(2,cpu_workers)
-    else: worker_plan=['gpu'] if engines==['gpu'] else ['cpu']*cpu_workers
+    with DB_LOCK:existing={r[0]:r[1] for r in DB.execute('SELECT path,modified_ns FROM images').fetchall()}
+    people=load_people();cpu_workers=max(2,min(4,(os.cpu_count() or 4)//2))
+    if mode=='cpu':worker_plan=['cpu']*cpu_workers
+    elif mode=='gpu':worker_plan=['gpu']
+    elif mode=='both':worker_plan=['gpu']+['cpu']*min(2,cpu_workers)
+    else:worker_plan=['gpu'] if engines==['gpu'] else ['cpu']*cpu_workers
     label=' + '.join(engine_label(e) for e in engines)
-    with LOCK:
-        detected=STATE.get('provider') or label
-        STATE.update(total=len(files),provider=detected,workers=len(worker_plan),message=f'Scanning with {label} ({len(worker_plan)} workers, dynamic queue)…')
-    work_queue=queue.Queue()
-    for p in files: work_queue.put(p)
-    completed=0; start=time.perf_counter()
+    with LOCK:STATE.update(total=len(files),provider=STATE.get('provider') or label,workers=len(worker_plan),message=f'Scanning with {label} ({len(worker_plan)} workers, dynamic queue)…')
+    work_queue=queue.Queue();[work_queue.put(p) for p in files];completed=0;start=time.perf_counter()
     def process(e):
         nonlocal completed
         while True:
             while True:
-                with LOCK:
-                    paused=STATE.get('pause_requested',False); cancelled=STATE.get('cancel_requested',False)
+                with LOCK:paused=STATE.get('pause_requested',False);cancelled=STATE.get('cancel_requested',False)
                 if cancelled:return
                 if not paused:break
                 time.sleep(0.15)
-            try: file=work_queue.get_nowait()
-            except queue.Empty: return
+            try:file=work_queue.get_nowait()
+            except queue.Empty:return
             try:
-                stat=file.stat(); key=str(file)
-                old=existing.get(key)
+                stat=file.stat();key=str(file);old=existing.get(key)
                 if old is not None and old==stat.st_mtime_ns:
-                    with LOCK:
-                        completed+=1; STATE['processed']=completed; STATE['unchanged']+=1
+                    with LOCK:completed+=1;STATE['processed']=completed;STATE['unchanged']+=1
                     continue
-                with LOCK: STATE['last_file']=str(file)
+                with LOCK:STATE['last_file']=str(file)
                 vectors=descriptors(file,e)
-                with LOCK: STATE['last_faces']=len(vectors)
+                with LOCK:STATE['last_faces']=len(vectors)
                 ids=[]
                 with PEOPLE_LOCK:
-                    for v in vectors: ids.append(match(v,people))
+                    for v in vectors:ids.append(match(v,people))
                 with DB_LOCK:
                     DB.execute('DELETE FROM faces WHERE image_path=?',(key,))
-                    for ident in ids:
-                        DB.execute('INSERT OR REPLACE INTO faces(image_path,person_id) VALUES(?,?)',(key,ident))
-                    DB.execute('INSERT OR REPLACE INTO face_processed(image_path) VALUES(?)',(key,))
-                    DB.execute('INSERT OR REPLACE INTO images(path,modified_ns,digest,scanned_at) VALUES(?,?,?,?)',(key,stat.st_mtime_ns,'',datetime.now(timezone.utc).isoformat()))
-                    if completed%32==0: DB.commit()
+                    for ident in ids:DB.execute('INSERT OR REPLACE INTO faces(image_path,person_id) VALUES(?,?)',(key,ident))
+                    DB.execute('INSERT OR REPLACE INTO face_processed(image_path) VALUES(?)',(key,));DB.execute('INSERT OR REPLACE INTO images(path,modified_ns,digest,scanned_at) VALUES(?,?,?,?)',(key,stat.st_mtime_ns,'',datetime.now(timezone.utc).isoformat()))
+                    if completed%32==0:DB.commit()
                 with LOCK:
-                    completed+=1; STATE['processed']=completed; STATE['new']+=1; STATE['faces']+=len(vectors)
-                    elapsed=max(time.perf_counter()-start,.001); speed=completed/elapsed
-                    STATE['speed']=speed; STATE['eta_seconds']=max(len(files)-completed,0)/speed
+                    completed+=1;STATE['processed']=completed;STATE['new']+=1;STATE['faces']+=len(vectors);elapsed=max(time.perf_counter()-start,.001);speed=completed/elapsed;STATE['speed']=speed;STATE['eta_seconds']=max(len(files)-completed,0)/speed
             except Exception as error:
-                with LOCK:
-                    completed+=1; STATE['processed']=completed; STATE['failed']+=1
-                    STATE['last_error']=f"{Path(file).name}: {error}"
-            finally:
-                work_queue.task_done()
+                with LOCK:completed+=1;STATE['processed']=completed;STATE['failed']+=1;STATE['last_error']=f"{Path(file).name}: {error}"
+            finally:work_queue.task_done()
     threads=[threading.Thread(target=process,args=(engine,),daemon=True) for engine in worker_plan]
     for t in threads:t.start()
     for t in threads:t.join()
     persist_people(people)
-    with DB_LOCK:
-        DB.execute('UPDATE people SET photos=(SELECT COUNT(DISTINCT image_path) FROM faces WHERE person_id=people.id)')
-        DB.execute('DELETE FROM people WHERE photos=0'); DB.commit()
+    with DB_LOCK:DB.execute('UPDATE people SET photos=(SELECT COUNT(DISTINCT image_path) FROM faces WHERE person_id=people.id)');DB.execute('DELETE FROM people WHERE photos=0');DB.commit()
     if STATE.get('cancel_requested'):
-        with LOCK: STATE.update(state='cancelled',message=f'Scan stopped — {completed:,} photos processed.')
-        return
-    # Do not block the end of a scan with the expensive global consolidation pass.
-    # Users can start consolidation separately; the UI runs it in the background.
+        with LOCK:STATE.update(state='cancelled',message=f'Scan stopped — {completed:,} photos processed.');return
     elapsed=max(time.perf_counter()-start,.001)
-    with LOCK: STATE.update(state='complete',message=f'Face scan complete — {completed:,} photos processed and groups consolidated.',speed=completed/elapsed,eta_seconds=0,pause_requested=False,cancel_requested=False)
+    with LOCK:STATE.update(state='complete',message=f'Face scan complete — {completed:,} photos processed.',speed=completed/elapsed,eta_seconds=0,pause_requested=False,cancel_requested=False)
 @app.get('/')
-def home(): return FileResponse(ROOT/'web'/'index.html')
+def home():return FileResponse(ROOT/'web'/'index.html')
 @app.get('/api/status')
 def status():
     with LOCK:return dict(STATE)
@@ -304,202 +225,203 @@ def start(request:ScanRequest):
     if not folder.is_dir():raise HTTPException(400,'That folder does not exist.')
     with LOCK:
         if STATE['state']=='scanning':raise HTTPException(409,'A scan is already running.')
-    threading.Thread(target=scan,args=(folder.resolve(),request.mode),daemon=True).start(); return {'ok':True,'mode':normalize_mode(request.mode)}
+    threading.Thread(target=scan,args=(folder.resolve(),request.mode),daemon=True).start();return {'ok':True,'mode':normalize_mode(request.mode)}
 @app.get('/api/people')
 def people():
-    with DB_LOCK:
-        rows=DB.execute('''
-            SELECT p.id,p.name,COUNT(DISTINCT f.image_path) AS photos
-            FROM people p LEFT JOIN faces f ON f.person_id=p.id
-            GROUP BY p.id,p.name
-            ORDER BY photos DESC,p.name
-        ''').fetchall()
+    with DB_LOCK:rows=DB.execute('SELECT p.id,p.name,COUNT(DISTINCT f.image_path) AS photos FROM people p LEFT JOIN faces f ON f.person_id=p.id GROUP BY p.id,p.name ORDER BY photos DESC,p.name').fetchall()
     return [{'id':x[0],'name':x[1],'photos':x[2]} for x in rows]
 def person_thumbnail(person_id:int):
-    with DB_LOCK:
-        row=DB.execute('SELECT image_path FROM faces WHERE person_id=? ORDER BY image_path LIMIT 1',(person_id,)).fetchone()
+    with DB_LOCK:row=DB.execute('SELECT image_path FROM faces WHERE person_id=? ORDER BY image_path LIMIT 1',(person_id,)).fetchone()
     return row[0] if row else None
-
 def person_images(person_id:int):
     with DB_LOCK:return [r[0] for r in DB.execute('SELECT image_path FROM faces WHERE person_id=? ORDER BY image_path',(person_id,)).fetchall()]
-
 def pause_scan():
     with LOCK:
-        if STATE['state']!='scanning': raise ValueError('No scan is running.')
-        STATE['pause_requested']=True; STATE['message']='Scan paused.'
+        if STATE['state']!='scanning':raise ValueError('No scan is running.')
+        STATE['pause_requested']=True;STATE['message']='Scan paused.'
 def resume_scan():
     with LOCK:
-        if STATE['state']!='scanning': raise ValueError('No scan is running.')
-        STATE['pause_requested']=False; STATE['message']='Resuming scan…'
+        if STATE['state']!='scanning':raise ValueError('No scan is running.')
+        STATE['pause_requested']=False;STATE['message']='Resuming scan…'
 def cancel_scan():
     with LOCK:
-        if STATE['state']!='scanning': raise ValueError('No scan is running.')
-        STATE['cancel_requested']=True; STATE['pause_requested']=False; STATE['message']='Stopping scan…'
-
+        if STATE['state']!='scanning':raise ValueError('No scan is running.')
+        STATE['cancel_requested']=True;STATE['pause_requested']=False;STATE['message']='Stopping scan…'
 def consolidate_people(threshold=0.62):
-    with DB_LOCK:
-        rows=DB.execute('SELECT id,name,embedding,photos FROM people WHERE embedding IS NOT NULL ORDER BY id').fetchall()
+    with DB_LOCK:rows=DB.execute('SELECT id,name,embedding,photos FROM people WHERE embedding IS NOT NULL ORDER BY id').fetchall()
     if len(rows)<2:return 0
-    ids=[int(r[0]) for r in rows]; names=[r[1] for r in rows]; photos=[int(r[3] or 0) for r in rows]
-    vecs=[]
+    ids=[int(r[0]) for r in rows];names=[r[1] for r in rows];photos=[int(r[3] or 0) for r in rows];vecs=[]
     for r in rows:
-        v=np.frombuffer(r[2],dtype=np.float32).copy(); v/=np.linalg.norm(v)+1e-8; vecs.append(v)
-    mat=np.stack(vecs); parent=list(range(len(ids)))
+        v=np.frombuffer(r[2],dtype=np.float32).copy();v/=np.linalg.norm(v)+1e-8;vecs.append(v)
+    mat=np.stack(vecs);parent=list(range(len(ids)))
     def find(x):
-        while parent[x]!=x:
-            parent[x]=parent[parent[x]]; x=parent[x]
+        while parent[x]!=x:parent[x]=parent[parent[x]];x=parent[x]
         return x
     def union(a,b):
         ra,rb=find(a),find(b)
-        if ra!=rb: parent[rb]=ra
+        if ra!=rb:parent[rb]=ra
     chunk=512
     for start_i in range(0,len(ids),chunk):
-        scores=mat[start_i:start_i+chunk] @ mat.T
-        rr,cc=np.where(scores>=threshold)
+        scores=mat[start_i:start_i+chunk]@mat.T;rr,cc=np.where(scores>=threshold)
         for a,b in zip(rr.tolist(),cc.tolist()):
             ai=start_i+a
-            if ai<b: union(ai,b)
+            if ai<b:union(ai,b)
     components={}
-    for i in range(len(ids)): components.setdefault(find(i),[]).append(i)
+    for i in range(len(ids)):components.setdefault(find(i),[]).append(i)
     merged=0
     with DB_LOCK:
         for members in components.values():
-            if len(members)<2: continue
-            target=max(members,key=lambda i: photos[i])
-            custom=[i for i in members if not re.fullmatch(r'Person \d+',names[i] or '')]
-            if custom: target=max(custom,key=lambda i: photos[i])
+            if len(members)<2:continue
+            target=max(members,key=lambda i:photos[i]);custom=[i for i in members if not re.fullmatch(r'Person \d+',names[i] or '')]
+            if custom:target=max(custom,key=lambda i:photos[i])
             target_id=ids[target]
             for i in members:
-                if i==target: continue
-                DB.execute('UPDATE faces SET person_id=? WHERE person_id=?',(target_id,ids[i]))
-                DB.execute('DELETE FROM person_embeddings WHERE person_id=?',(ids[i],)); DB.execute('DELETE FROM people WHERE id=?',(ids[i],)); merged+=1
+                if i==target:continue
+                DB.execute('UPDATE faces SET person_id=? WHERE person_id=?',(target_id,ids[i]));DB.execute('DELETE FROM person_embeddings WHERE person_id=?',(ids[i],));DB.execute('DELETE FROM people WHERE id=?',(ids[i],));merged+=1
             DB.execute('UPDATE people SET photos=(SELECT COUNT(DISTINCT image_path) FROM faces WHERE person_id=people.id) WHERE id=?',(target_id,))
         DB.commit()
     return merged
-
 def consolidate_existing():
     with LOCK:
-        if STATE['state']=='scanning': raise ValueError('Wait for the current scan to finish.')
-        if STATE.get('consolidating'): raise ValueError('Consolidation is already running.')
-        STATE['consolidating']=True
-        STATE['message']='Consolidating same-person groups…'
+        if STATE['state']=='scanning':raise ValueError('Wait for the current scan to finish.')
+        if STATE.get('consolidating'):raise ValueError('Consolidation is already running.')
+        STATE['consolidating']=True;STATE['message']='Consolidating same-person groups…'
     try:
         merged=consolidate_people(0.62)
-        with LOCK: STATE['message']=f'Consolidated {merged} duplicate person group(s).'
+        with LOCK:STATE['message']=f'Consolidated {merged} duplicate person group(s).'
         return merged
     finally:
-        with LOCK: STATE['consolidating']=False
-
+        with LOCK:STATE['consolidating']=False
 def merge_people(ids):
     ids=list(dict.fromkeys(int(x) for x in ids))
-    if len(ids)<2: raise ValueError('Select at least two people to merge.')
-    with DB_LOCK:
-        rows=DB.execute('SELECT id,name,embedding,photos FROM people WHERE id IN (%s)'%(','.join('?'*len(ids))),ids).fetchall()
-    if len(rows)!=len(ids): raise ValueError('One or more selected people no longer exists.')
-    target=max(rows,key=lambda r:int(r[3] or 0)); custom=[r for r in rows if not re.fullmatch(r'Person \d+',r[1] or '')]
-    if custom: target=max(custom,key=lambda r:int(r[3] or 0))
+    if len(ids)<2:raise ValueError('Select at least two people to merge.')
+    with DB_LOCK:rows=DB.execute('SELECT id,name,embedding,photos FROM people WHERE id IN (%s)'%(','.join('?'*len(ids))),ids).fetchall()
+    if len(rows)!=len(ids):raise ValueError('One or more selected people no longer exists.')
+    target=max(rows,key=lambda r:int(r[3] or 0));custom=[r for r in rows if not re.fullmatch(r'Person \d+',r[1] or '')]
+    if custom:target=max(custom,key=lambda r:int(r[3] or 0))
     target_id=int(target[0])
     with DB_LOCK:
         for r in rows:
             if int(r[0])!=target_id:
-                DB.execute('UPDATE faces SET person_id=? WHERE person_id=?',(target_id,int(r[0])))
-                DB.execute('DELETE FROM person_embeddings WHERE person_id=?',(int(r[0]),)); DB.execute('DELETE FROM people WHERE id=?',(int(r[0]),))
-        DB.execute('UPDATE people SET photos=(SELECT COUNT(DISTINCT image_path) FROM faces WHERE person_id=people.id) WHERE id=?',(target_id,)); DB.commit()
+                DB.execute('UPDATE faces SET person_id=? WHERE person_id=?',(target_id,int(r[0])));DB.execute('DELETE FROM person_embeddings WHERE person_id=?',(int(r[0]),));DB.execute('DELETE FROM people WHERE id=?',(int(r[0]),))
+        DB.execute('UPDATE people SET photos=(SELECT COUNT(DISTINCT image_path) FROM faces WHERE person_id=people.id) WHERE id=?',(target_id,));DB.commit()
     return target_id
-
 def export_person(person_id:int,output_folder:str):
     if not output_folder.strip():raise ValueError('Choose an output folder.')
-    with DB_LOCK:
-        row=DB.execute('SELECT name FROM people WHERE id=?',(person_id,)).fetchone(); paths=[r[0] for r in DB.execute('SELECT image_path FROM faces WHERE person_id=?',(person_id,)).fetchall()]
+    with DB_LOCK:row=DB.execute('SELECT name FROM people WHERE id=?',(person_id,)).fetchone();paths=[r[0] for r in DB.execute('SELECT image_path FROM faces WHERE person_id=?',(person_id,)).fetchall()]
     if not row:raise ValueError('That person group no longer exists.')
-    folder=Path(output_folder)/safe_folder_name(row[0]); return {'copied':copy_to_folder(paths,folder),'folder':str(folder)}
+    folder=Path(output_folder)/safe_folder_name(row[0]);return {'copied':copy_to_folder(paths,folder),'folder':str(folder)}
 def export_all_people(output_folder:str):
     if not output_folder.strip():raise ValueError('Choose an output folder.')
-    # Export-time consolidation: several cluster IDs can belong to the same real person.
-    # Group their normalized centroid embeddings before creating folders.
-    MERGE_THRESHOLD=0.62
-    with DB_LOCK:
-        rows=DB.execute('SELECT id,name,embedding,photos FROM people ORDER BY id').fetchall()
-        photo_rows=DB.execute('SELECT person_id,image_path FROM faces ORDER BY person_id,image_path').fetchall()
+    with DB_LOCK:rows=DB.execute('SELECT id,name,embedding,photos FROM people ORDER BY id').fetchall();photo_rows=DB.execute('SELECT person_id,image_path FROM faces ORDER BY person_id,image_path').fetchall()
     groups=[]
     for ident,name,raw,photos in rows:
-        if not raw: continue
-        vec=np.frombuffer(raw,dtype=np.float32).copy()
-        vec/=np.linalg.norm(vec)+1e-8
-        groups.append({'ids':[int(ident)],'name':name,'embedding':vec,'photos':int(photos or 0),'paths':[]})
+        if not raw:continue
+        vec=np.frombuffer(raw,dtype=np.float32).copy();vec/=np.linalg.norm(vec)+1e-8;groups.append({'ids':[int(ident)],'name':name,'embedding':vec,'photos':int(photos or 0),'paths':[]})
     by_id={g['ids'][0]:g for g in groups}
     for ident,path in photo_rows:
-        if int(ident) in by_id: by_id[int(ident)]['paths'].append(path)
-    # Union clusters whose centroids are close enough to be the same person.
+        if int(ident) in by_id:by_id[int(ident)]['paths'].append(path)
     merged=[]
     for g in groups:
-        target=None; best=-1.0
+        target=None;best=-1.0
         for m in merged:
             score=float(np.dot(m['embedding'],g['embedding']))
-            if score>=MERGE_THRESHOLD and score>best:
-                best=score; target=m
-        if target is None:
-            merged.append(g)
+            if score>=0.62 and score>best:best=score;target=m
+        if target is None:merged.append(g)
         else:
-            n1=target['photos']; n2=g['photos']; total_n=max(1,n1+n2)
-            target['embedding']=(target['embedding']*n1+g['embedding']*n2)/total_n
-            target['embedding']/=np.linalg.norm(target['embedding'])+1e-8
-            target['photos']=n1+n2
-            target['ids'].extend(g['ids'])
-            target['paths'].extend(g['paths'])
-    out=Path(output_folder); copied=0
-    for index,g in enumerate(merged,1):
-        name=safe_folder_name(g['name'] or f'Person {index}')
-        copied+=copy_to_folder(g['paths'],out/name)
-    return {'copied':copied,'groups':len(merged),'original_groups':len(groups),'folder':str(out),'merge_threshold':MERGE_THRESHOLD}
+            n1=target['photos'];n2=g['photos'];total_n=max(1,n1+n2);target['embedding']=(target['embedding']*n1+g['embedding']*n2)/total_n;target['embedding']/=np.linalg.norm(target['embedding'])+1e-8;target['photos']=n1+n2;target['ids'].extend(g['ids']);target['paths'].extend(g['paths'])
+    out=Path(output_folder);copied=0
+    for index,g in enumerate(merged,1):copied+=copy_to_folder(g['paths'],out/safe_folder_name(g['name'] or f'Person {index}'))
+    return {'copied':copied,'groups':len(merged),'original_groups':len(groups),'folder':str(out),'merge_threshold':0.62}
 def reset_library():
     with LOCK:
         if STATE['state']=='scanning':raise ValueError('Wait for the current scan to finish before resetting.')
     with DB_LOCK:
-        for table in ('faces','face_processed','people','images'): DB.execute(f'DELETE FROM {table}')
+        for table in ('faces','face_processed','people','images'):DB.execute(f'DELETE FROM {table}')
         DB.commit()
-    with LOCK: STATE.update(state='ready',message='Library cleared. Choose a folder to scan.',total=0,processed=0,new=0,unchanged=0,failed=0,faces=0,speed=0.0,eta_seconds=None)
-@app.post('/api/pause')
-def pause_scan():
-    with LOCK:
-        if STATE['state']!='scanning': raise HTTPException(409,'No scan is running.')
-        STATE['pause_requested']=True; STATE['message']='Scan paused.'
-    return {'ok':True}
-@app.post('/api/resume')
-def resume_scan():
-    with LOCK:
-        if STATE['state']!='scanning': raise HTTPException(409,'No scan is running.')
-        STATE['pause_requested']=False; STATE['message']='Resuming scan…'
-    return {'ok':True}
-@app.post('/api/cancel')
-def cancel_scan():
-    with LOCK:
-        if STATE['state']!='scanning': raise HTTPException(409,'No scan is running.')
-        STATE['cancel_requested']=True; STATE['pause_requested']=False; STATE['message']='Stopping scan…'
-    return {'ok':True}
+    with LOCK:STATE.update(state='ready',message='Library cleared. Choose a folder to scan.',total=0,processed=0,new=0,unchanged=0,failed=0,faces=0,speed=0.0,eta_seconds=None)
+
+# Exact duplicate-photo tools. These compare file bytes with SHA-256, so they never
+# classify merely similar-looking photos as duplicates. Deletion always keeps one copy.
+def _sha256_file(path:Path,chunk_size=1024*1024):
+    h=hashlib.sha256()
+    with path.open('rb') as f:
+        while True:
+            block=f.read(chunk_size)
+            if not block:break
+            h.update(block)
+    return h.hexdigest()
+def find_duplicate_photos(folder=None):
+    with DB_LOCK:
+        rows=DB.execute('SELECT path,modified_ns,digest FROM images ORDER BY path').fetchall()
+    candidates=[]
+    for raw,mtime,digest in rows:
+        p=Path(raw)
+        if not p.is_file() or p.suffix.lower() not in EXT:continue
+        if folder and not str(p).lower().startswith(str(Path(folder).resolve()).lower()):continue
+        try:
+            stat=p.stat()
+            if digest and int(mtime)==int(stat.st_mtime_ns):
+                digest_value=digest
+            else:
+                digest_value=_sha256_file(p)
+                with DB_LOCK:DB.execute('UPDATE images SET modified_ns=?,digest=? WHERE path=?',(stat.st_mtime_ns,digest_value,str(p)))
+            candidates.append((str(p),stat.st_size,digest_value,stat.st_mtime_ns))
+        except OSError:continue
+    with DB_LOCK:DB.commit()
+    buckets={}
+    for path,size,digest,mtime in candidates:buckets.setdefault((size,digest),[]).append((path,mtime))
+    groups=[]
+    for (size,digest),items in buckets.items():
+        if len(items)>1:
+            items.sort(key=lambda x:(x[1],len(x[0]),x[0].lower()))
+            groups.append({'hash':digest,'size':size,'keep':items[0][0],'duplicates':[x[0] for x in items[1:]],'count':len(items)})
+    groups.sort(key=lambda g:(-len(g['duplicates']),g['keep'].lower()))
+    return groups
+def remove_duplicate_photos(groups):
+    removed=0;failed=[]
+    for group in groups or []:
+        keep=str(group.get('keep',''))
+        for raw in group.get('duplicates',[]):
+            path=Path(raw)
+            if str(path)==keep:continue
+            try:
+                if path.exists():path.unlink();removed+=1
+                with DB_LOCK:
+                    DB.execute('DELETE FROM faces WHERE image_path=?',(str(path),));DB.execute('DELETE FROM face_processed WHERE image_path=?',(str(path),));DB.execute('DELETE FROM images WHERE path=?',(str(path),))
+            except Exception as e:failed.append({'path':str(path),'error':str(e)})
+    with DB_LOCK:
+        DB.execute('UPDATE people SET photos=(SELECT COUNT(DISTINCT image_path) FROM faces WHERE person_id=people.id)');DB.execute('DELETE FROM people WHERE photos=0');DB.commit()
+    return {'removed':removed,'failed':failed}
+@app.get('/api/duplicates')
+def duplicates():
+    try:return {'groups':find_duplicate_photos()}
+    except Exception as e:raise HTTPException(500,str(e))
+@app.post('/api/duplicates/remove')
+def remove_duplicates(body:dict):
+    try:return remove_duplicate_photos(body.get('groups',[]))
+    except Exception as e:raise HTTPException(500,str(e))
 @app.post('/api/people/consolidate')
 def consolidate_existing_api():
     try:return {'ok':True,'merged':consolidate_existing()}
     except ValueError as error:raise HTTPException(400,str(error))
-
 @app.post('/api/people/merge')
 def merge_selected(body:dict):
     try:return {'ok':True,'target':merge_people(body.get('ids',[]))}
     except ValueError as error:raise HTTPException(400,str(error))
-
 @app.post('/api/people/{person_id}/rename')
 def rename(person_id:int,body:dict):
     name=str(body.get('name','')).strip()
     if not name:raise HTTPException(400,'Enter a name.')
     try:
-        with DB_LOCK: DB.execute('UPDATE people SET name=? WHERE id=?',(name,person_id)); DB.commit()
+        with DB_LOCK:DB.execute('UPDATE people SET name=? WHERE id=?',(name,person_id));DB.commit()
     except sqlite3.IntegrityError:raise HTTPException(400,'That name is already used.')
     return {'ok':True}
 @app.post('/api/export-unknown')
 def export(request:ExportRequest):
     if not request.output_folder.strip():raise HTTPException(400,'Choose an output folder.')
     out=Path(request.output_folder.strip().strip('"')).expanduser()/'Unknown'
-    with DB_LOCK: paths=DB.execute('SELECT path FROM images WHERE path NOT IN (SELECT image_path FROM faces)').fetchall()
+    with DB_LOCK:paths=DB.execute('SELECT path FROM images WHERE path NOT IN (SELECT image_path FROM faces)').fetchall()
     return {'copied':copy_to_folder([r[0] for r in paths],out),'folder':str(out)}
 if __name__=='__main__':
     import uvicorn
