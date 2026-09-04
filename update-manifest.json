@@ -1,6 +1,6 @@
 {
-  "version": "3.3.1",
-  "notes": "Stability and UX pass: recycled People gallery, stable selection, debounced search, sorting, keyboard shortcuts, background exports, EXIF-correct thumbnails, persistent face-memory preservation, and restored Rename action.",
+  "version": "3.3.2",
+  "notes": "Fixes the v3.3.1 startup crash caused by creating a Tkinter StringVar before the Tk root existed. Launches the stable recycled-gallery launcher v4.",
   "files": [
     {"path": "desktop.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/desktop.py"},
     {"path": "backend/service.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/service.py"},
@@ -8,6 +8,7 @@
     {"path": "version.json", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/version.json"},
     {"path": "launcher_v2.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/launcher_v2.py"},
     {"path": "launcher_v3.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/launcher_v3.py"},
+    {"path": "launcher_v4.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/launcher_v4.py"},
     {"path": "run-desktop.ps1", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/run-desktop.ps1"}
   ]
 }
