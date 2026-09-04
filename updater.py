@@ -1,15 +1,12 @@
 import hashlib, json, os, shutil, subprocess, sys, tempfile, urllib.request
 from pathlib import Path
-
-APP_VERSION="3.3.3"
+APP_VERSION="3.3.4"
 UPDATE_MANIFEST_URL="https://raw.githubusercontent.com/BbyGhost/face-sorter/main/update-manifest.json"
 APP_DIR=Path(__file__).resolve().parent
 BACKUP_DIR=APP_DIR/".update-backup"
-
 def download_bytes(url,timeout=30):
     req=urllib.request.Request(url,headers={"Cache-Control":"no-cache","User-Agent":"FaceSorter-Updater"})
     with urllib.request.urlopen(req,timeout=timeout) as r:return r.read()
-
 def check():
     manifest=download_bytes(UPDATE_MANIFEST_URL,15); data=json.loads(manifest.decode("utf-8")); remote=str(data.get("version",APP_VERSION)); changed=[]
     for item in data.get("files",[]):
@@ -19,7 +16,6 @@ def check():
         if expected and hashlib.sha256(target.read_bytes()).hexdigest().lower()==str(expected).lower(): continue
         changed.append(item)
     return {"update":remote!=APP_VERSION and bool(changed),"current":APP_VERSION,"remote":remote,"changed":changed,"manifest":data}
-
 def apply(result):
     changed=result.get("changed",[])
     if not changed:return False
@@ -37,10 +33,8 @@ def apply(result):
                 backup=BACKUP_DIR/rel; backup.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(target,backup)
             target.parent.mkdir(parents=True,exist_ok=True); os.replace(str(temp),str(target))
     return True
-
 def restart():
-    launcher=APP_DIR/"launcher_v5.py"
-    target=launcher if launcher.exists() else (APP_DIR/"launcher_v4.py" if (APP_DIR/"launcher_v4.py").exists() else APP_DIR/"desktop.py")
+    launcher=APP_DIR/"launcher_v6.py"
+    target=launcher if launcher.exists() else (APP_DIR/"launcher_v5.py" if (APP_DIR/"launcher_v5.py").exists() else APP_DIR/"desktop.py")
     subprocess.Popen([sys.executable,str(target)],cwd=str(APP_DIR),creationflags=getattr(subprocess,"CREATE_NEW_PROCESS_GROUP",0),close_fds=True)
-
 if __name__=="__main__": print(json.dumps(check(),indent=2))
