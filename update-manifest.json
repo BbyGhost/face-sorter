@@ -1,12 +1,13 @@
 {
-  "version": "3.3.0",
-  "notes": "Major UX/performance upgrade: recycled People gallery, stable selection, debounced search, sorting, keyboard selection, background exports, EXIF-correct thumbnails, and persistent face-memory preservation during merges/consolidation.",
+  "version": "3.3.1",
+  "notes": "Stability and UX pass: recycled People gallery, stable selection, debounced search, sorting, keyboard shortcuts, background exports, EXIF-correct thumbnails, persistent face-memory preservation, and restored Rename action.",
   "files": [
     {"path": "desktop.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/desktop.py"},
     {"path": "backend/service.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/service.py"},
     {"path": "updater.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/updater.py"},
     {"path": "version.json", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/version.json"},
     {"path": "launcher_v2.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/launcher_v2.py"},
+    {"path": "launcher_v3.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/launcher_v3.py"},
     {"path": "run-desktop.ps1", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/run-desktop.ps1"}
   ]
 }
