@@ -1,14 +1,9 @@
 {
-  "version": "3.3.6",
-  "notes": "Premium organized UI, working Settings/update controls, safe library reset, duplicate cleanup, library health check and double-click name rename.",
+  "version": "3.3.7",
+  "notes": "Premium UI cleanup, one update action in Settings, and a true fresh face rescan that clears old face memory before scanning again.",
   "files": [
-    {"path": "backend/service.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/service.py"},
-    {"path": "updater.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/updater.py"},
-    {"path": "version.json", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/version.json"},
-    {"path": "desktop.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/desktop.py"},
-    {"path": "launcher_v6.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/launcher_v6.py"},
-    {"path": "launcher_v7.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/launcher_v7.py"},
     {"path": "launcher_v8.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/launcher_v8.py"},
-    {"path": "run-desktop.ps1", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/run-desktop.ps1"}
+    {"path": "version.json", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/version.json"},
+    {"path": "update-manifest.json", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/update-manifest.json"}
   ]
 }
