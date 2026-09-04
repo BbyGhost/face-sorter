@@ -1,4 +1,4 @@
-"""Face Sorter v3.3.6 - premium organized UI and library tools."""
+"""Face Sorter v3.3.7 - premium organized UI and library tools."""
 from __future__ import annotations
 import os, threading, tkinter as tk, updater
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -13,15 +13,18 @@ class EnhancedFaceSorter(_EnhancedFaceSorter):
     def __init__(self):
         self._settings_win=None
         super().__init__()
-        # v7 added a duplicate button to the bottom bar. Keep duplicates in the
-        # Tools/Settings areas instead so the main action bar stays clean.
+        # Keep application updates in Settings only. Remove duplicate actions
+        # inherited from older launcher versions from the bottom action bar.
         try:
             bar=self.selection_label.master
             for child in list(bar.winfo_children()):
                 try:
-                    if child.cget("text")=="Find duplicates": child.destroy()
-                except Exception: pass
-        except Exception: pass
+                    if child.cget("text") in {"Find duplicates", "Check for updates"}:
+                        child.destroy()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _sidebar(self):
         tk.Label(self.sidebar,text="◈",bg=SIDEBAR,fg="#a78bfa",font=("Segoe UI",30,"bold")).pack(anchor="w",padx=24,pady=(22,0))
@@ -34,11 +37,11 @@ class EnhancedFaceSorter(_EnhancedFaceSorter):
         self.nav_library.bind("<Button-1>",lambda e:self._show_library_hint())
         tk.Frame(self.sidebar,bg=BORDER,height=1).pack(fill="x",padx=20,pady=18)
         tk.Label(self.sidebar,text="LIBRARY TOOLS",bg=SIDEBAR,fg=MUTED,font=("Segoe UI",8,"bold")).pack(anchor="w",padx=24,pady=(0,7))
-        for text,cmd in (("  ◌   Find duplicates",self.find_duplicates),("  ◇   Library health",self.library_health),("  ↻   Rebuild index",self.rebuild_index)):
+        for text,cmd in (("  ◌   Find duplicates",self.find_duplicates),("  ◇   Library health",self.library_health),("  ↻   Re-scan faces",self.rescan_faces)):
             self.button(self.sidebar,text,cmd).pack(fill="x",padx=12,pady=3)
         bottom=tk.Frame(self.sidebar,bg=SIDEBAR); bottom.pack(side="bottom",fill="x",padx=20,pady=18)
         self.button(bottom,"⚙  Settings",self.show_settings).pack(fill="x")
-        tk.Label(bottom,text="v3.3.6  ·  Local AI",bg=SIDEBAR,fg=MUTED,font=("Segoe UI",8)).pack(anchor="w",pady=(10,0))
+        tk.Label(bottom,text="v3.3.7  ·  Local AI",bg=SIDEBAR,fg=MUTED,font=("Segoe UI",8)).pack(anchor="w",pady=(10,0))
 
     def _topbar(self,main):
         bar=tk.Frame(main,bg=BG); bar.pack(fill="x",padx=30,pady=(22,12))
@@ -78,19 +81,19 @@ class EnhancedFaceSorter(_EnhancedFaceSorter):
         win=tk.Toplevel(self); self._settings_win=win; win.title("Face Sorter Settings"); win.geometry("720x660"); win.minsize(650,560); win.configure(bg=BG); win.transient(self)
         head=tk.Frame(win,bg=BG); head.pack(fill="x",padx=30,pady=(25,16))
         tk.Label(head,text="Settings",bg=BG,fg=TEXT,font=("Segoe UI",25,"bold")).pack(anchor="w")
-        tk.Label(head,text="Manage your local index, cleanup, performance and updates.",bg=BG,fg=MUTED,font=("Segoe UI",10)).pack(anchor="w",pady=(3,0))
+        tk.Label(head,text="Manage your local index, cleanup, face re-scanning and updates.",bg=BG,fg=MUTED,font=("Segoe UI",10)).pack(anchor="w",pady=(3,0))
         body=tk.Frame(win,bg=BG); body.pack(fill="both",expand=True,padx=30)
         self._settings_group(body,"LIBRARY",[
             ("Clear library index","Forget people, face assignments, prototypes and scan history. Original photos are never touched.",self.clear_library,"Clear"),
             ("Find duplicate photos","Find exact duplicate files, review the KEEP / REMOVE list, then delete only the copies you approve.",self.find_duplicates,"Review"),
             ("Library health","Check for missing originals and stale index entries without deleting any photos.",self.library_health,"Check"),
-            ("Rebuild index","Mark the library for a full re-check while preserving saved people and face memory.",self.rebuild_index,"Rebuild"),
+            ("Re-scan faces","Remove the current people, face assignments and saved face memory, then scan the selected photo folder from scratch.",self.rescan_faces,"Re-scan"),
         ])
         self._settings_group(body,"APPLICATION",[
             ("Check for updates","Check GitHub from inside the app, download the required changed files and restart automatically.",self.check_for_updates,"Check"),
         ])
         foot=tk.Frame(win,bg=BG); foot.pack(fill="x",padx=30,pady=20)
-        tk.Label(foot,text="Face Sorter 3.3.6  ·  Local AI  ·  Photos stay on your PC",bg=BG,fg=MUTED,font=("Segoe UI",8)).pack(side="left")
+        tk.Label(foot,text="Face Sorter 3.3.7  ·  Local AI  ·  Photos stay on your PC",bg=BG,fg=MUTED,font=("Segoe UI",8)).pack(side="left")
         self.button(foot,"Close",win.destroy).pack(side="right")
 
     def _settings_group(self,parent,title,items):
@@ -134,14 +137,30 @@ class EnhancedFaceSorter(_EnhancedFaceSorter):
             messagebox.showinfo("Library cleared","The Face Sorter index is empty. Your original photos were not touched.",parent=self)
         except Exception as e:messagebox.showerror("Clear library failed",str(e),parent=self)
 
-    def rebuild_index(self):
+    def rescan_faces(self):
         if service.STATE.get("state")=="scanning":
-            messagebox.showwarning("Scan running","Stop the scan before rebuilding the index.",parent=self);return
+            messagebox.showwarning("Scan running","Stop the current scan before starting a fresh face scan.",parent=self);return
+        folder=self.folder.get().strip().strip('"')
+        if not os.path.isdir(folder):
+            folder=filedialog.askdirectory(title="Choose photo folder to re-scan")
+            if not folder:return
+            self.folder.set(folder)
+        ok=messagebox.askyesno("Re-scan faces","This will permanently remove the current People groups, face assignments and saved face memory from Face Sorter.\n\nYour original photos and photo index are kept safe. The selected folder will then be scanned again from scratch.\n\nContinue?",icon="warning",parent=self)
+        if not ok:return
         try:
             with service.DB_LOCK:
-                service.DB.execute("DELETE FROM face_processed");service.DB.execute("UPDATE images SET modified_ns=0");service.DB.commit()
-            self.status.set("Index marked for rebuild. Run Scan library to re-check your photos.");messagebox.showinfo("Index ready","The next scan will re-check every indexed photo. Saved people and face memory are preserved.",parent=self)
-        except Exception as e:messagebox.showerror("Rebuild index failed",str(e),parent=self)
+                service.DB.execute("DELETE FROM faces")
+                service.DB.execute("DELETE FROM face_processed")
+                service.DB.execute("DELETE FROM person_embeddings")
+                service.DB.execute("DELETE FROM people")
+                service.DB.execute("UPDATE images SET modified_ns=0")
+                service.DB.commit()
+            self.selected_ids.clear();self.groups=[];self.filtered_groups=[]
+            self.refresh()
+            self.status.set("Old face data removed. Starting a fresh face scan…")
+            self.after(250,self.start)
+        except Exception as e:
+            messagebox.showerror("Re-scan faces failed",str(e),parent=self)
 
     def library_health(self):
         win=tk.Toplevel(self);win.title("Library health");win.geometry("760x520");win.minsize(650,450);win.configure(bg=BG);win.transient(self)
