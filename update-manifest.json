@@ -1,6 +1,6 @@
 {
-  "version": "3.3.3",
-  "notes": "Adds a real person photo browser: double-click a person to inspect assigned photos, double-click a photo to open the original, and Open folder launches Windows Explorer.",
+  "version": "3.3.4",
+  "notes": "Fixes person gallery thumbnails by moving all Tk updates to the main thread and loading previews through a safe queue.",
   "files": [
     {"path": "desktop.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/desktop.py"},
     {"path": "backend/service.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/backend/service.py"},
@@ -8,6 +8,7 @@
     {"path": "version.json", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/version.json"},
     {"path": "launcher_v4.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/launcher_v4.py"},
     {"path": "launcher_v5.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/launcher_v5.py"},
+    {"path": "launcher_v6.py", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/launcher_v6.py"},
     {"path": "run-desktop.ps1", "url": "https://raw.githubusercontent.com/BbyGhost/face-sorter/main/run-desktop.ps1"}
   ]
 }
